@@ -1,0 +1,124 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentclaw-ai"
+version = "1.0.5"
+description = "Build production-ready AI agents in minutes — declarative workflows, built-in dashboard, skills, streaming & scheduling out of the box."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "AgentClaw Team"}
+]
+keywords = ["ai", "agent", "llm", "workflow", "langgraph", "agentclaw"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "click>=8.0.0",
+    "openai>=1.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.2.0",
+    "langchain-openai>=0.1.0",
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "tiktoken>=0.5.0",
+    "asyncpg>=0.28.0",
+    "psycopg[binary]>=3.1.0",
+    "psycopg-pool>=3.1.0",
+    "langgraph-checkpoint-postgres>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+redis = [
+    "redis>=5.0.0",
+]
+postgres = [
+    # 核心 PG 依赖已在 dependencies 中，此处保留用于向后兼容
+]
+document = [
+    "markitdown[all]>=0.0.1",
+]
+knowledgebase = [
+    "markitdown[all]>=0.0.1",
+    "pymilvus[milvus_lite]>=2.5.0",
+]
+scheduler = [
+    "APScheduler>=3.10.0,<4.0.0",
+    "croniter>=2.0.0",
+]
+browser = [
+    "playwright>=1.52.0",
+]
+windows = [
+    "pywinauto>=0.6.8; platform_system == 'Windows'",
+]
+channels = [
+    "aiohttp>=3.8.0",
+    "lark-oapi>=1.4.0",
+    "dingtalk-stream>=0.9.0",
+]
+all = [
+    "redis>=5.0.0",
+    "markitdown[all]>=0.0.1",
+    "pymilvus[milvus_lite]>=2.5.0",
+    "APScheduler>=3.10.0,<4.0.0",
+    "croniter>=2.0.0",
+    "playwright>=1.52.0",
+    "pywinauto>=0.6.8; platform_system == 'Windows'",
+    "aiohttp>=3.8.0",
+    "lark-oapi>=1.4.0",
+    "dingtalk-stream>=0.9.0",
+]
+
+[project.scripts]
+agentclaw = "agentclaw.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/negai-ai/agentclaw"
+Documentation = "https://github.com/negai-ai/agentclaw"
+Repository = "https://github.com/negai-ai/agentclaw"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentclaw*"]
+
+[tool.setuptools.package-data]
+agentclaw = [
+    "admin-dashboard/dist/**/*",
+    "docker/docker-compose.yml",
+    "docker/start.sh",
+    "docker/stop.sh",
+    "docker/.env.example",
+    "skills/builtin_skills/**/*",
+    "channels/wecom_worker/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+    "agentclaw/test",
+]
+markers = [
+    "api: API contract tests for public and admin routers",
+    "unit: fast unit tests for isolated functions and models",
+    "boundary: edge-case tests for limits, validation, and thresholds",
+    "integration: in-process integration tests that compose multiple AgentClaw layers",
+    "real: real environment tests against an already-running AgentClaw server",
+]

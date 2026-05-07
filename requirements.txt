@@ -1,0 +1,71 @@
+# AgentClaw - 依赖清单
+# Python >= 3.10
+# 与 pyproject.toml [project.dependencies] 保持同步
+
+# ============================================================
+# 核心依赖（必需）
+# ============================================================
+
+# CLI
+click>=8.0.0
+
+# LLM 调用
+openai>=1.0.0
+langchain-openai>=0.1.0
+tiktoken>=0.5.0
+
+# Web 服务
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pydantic>=2.0.0
+
+# HTTP 客户端
+httpx>=0.24.0
+
+# 环境变量管理
+python-dotenv>=1.0.0
+
+# LangGraph
+langgraph>=0.2.0
+langchain-core>=0.2.0
+
+# MCP 集成
+mcp>=1.0.0
+
+# 数据库
+asyncpg>=0.28.0
+psycopg[binary]>=3.1.0
+psycopg-pool>=3.1.0
+langgraph-checkpoint-postgres>=1.0.0
+
+# ============================================================
+# 可选依赖
+# ============================================================
+
+# Redis（跨实例同步） — pip install agentclaw[redis]
+# redis>=5.0.0
+
+# 文档解析 — pip install agentclaw[document]
+# markitdown[all]>=0.0.1
+
+# 知识库 — pip install agentclaw[knowledgebase]
+# pymilvus>=2.5.0
+
+# 定时任务 — pip install agentclaw[scheduler]
+# APScheduler>=3.10.0,<4.0.0
+# croniter>=2.0.0
+
+# 渠道集成 — pip install agentclaw[channels]
+# aiohttp>=3.8.0
+# lark-oapi>=1.4.0
+# dingtalk-stream>=0.9.0
+
+# Windows 桌面元素枚举 — pip install agentclaw[windows]
+# pywinauto>=0.6.8; platform_system == 'Windows'
+
+# ============================================================
+# 开发和测试 — pip install agentclaw[dev]
+# ============================================================
+
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0

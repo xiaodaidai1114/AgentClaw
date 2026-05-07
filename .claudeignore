@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Node
+node_modules/
+agentclaw/admin-dashboard/dist/
+
+# Lock files
+uv.lock
+package-lock.json
+
+# Build artifacts / prototypes
+agentclaw/admin-dashboard/ui-prototype/
+demo/scheduler_prototype.html
+
+# Backup / reference docs (not source code)
+backup/
+
+# Assets (images etc.)
+assets/
+
+# Logs
+*.log
+result.log

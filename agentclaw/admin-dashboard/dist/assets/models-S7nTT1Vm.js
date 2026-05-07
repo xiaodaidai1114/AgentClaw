@@ -1,0 +1,1 @@
+function e(r){return String((r==null?void 0:r.model_type)||(r==null?void 0:r.type)||"").trim().toLowerCase()}function i(r){const t=e(r),n=String((r==null?void 0:r.id)||"").trim().toLowerCase();return!(["embedding","rerank"].includes(t)||!t&&/(embedding|rerank|reranker|重排|嵌入)/.test(n))}function a(r=[]){return r.filter(i).map(t=>({label:t.id,value:t.id}))}export{i,a as t};
