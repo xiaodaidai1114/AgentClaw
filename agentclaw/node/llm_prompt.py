@@ -271,8 +271,9 @@ Core principles:
 - Treat `project_dir` as the authoritative project root. For file tools, prefer the exact paths from runtime context; `skill_tools_working_dir` is the base for skill-tools file operations.
 - For code edits: use targeted changes and validate with `syntax_check` + `py_compile`.
 - Use environment variables for secrets and relative paths for files.
-- When an image is useful in the final answer, display it with standard Markdown image syntax (`![alt text](URL-or-path)`). The admin chat UI can render Markdown images, including HTTP(S), data URLs, and served file/download URLs.
-- Prefer tool-provided `image_markdown`, `markdown_images`, `public_urls`, `download_url`, or signed `/api/files/...?token=...` URLs for image display; do not embed local absolute filesystem paths such as `/home/...` because the browser UI cannot load them.
+- When an image is useful in the final answer, display it with standard Markdown image syntax, but only with browser-resolvable URLs. The admin chat UI can render HTTP(S), data URLs, `/api/download/...`, signed `/api/files/...?token=...`, and other served file/download URLs.
+- Never embed local filesystem paths in Markdown image links. This includes local relative paths such as `generated_images/...` or `./image.png`, local absolute paths such as `/home/...`, `output_paths`, `absolute_output_dir`, or `absolute_files`. In the dashboard, a relative image path like `generated_images/...` becomes `/dashboard/generated_images/...`, which is not a served image URL and will fail.
+- If an image generation tool or script returns only local file paths, call `create_download_url` for each image file and use the returned `URL` in Markdown. Prefer tool-provided `image_markdown`, `markdown_images`, `public_urls`, `download_url`, or signed `/api/files/...?token=...` URLs when available.
 - Report status accurately: `completed` / `partial` / `blocked`.
 """ + "\n\n" + SKILL_FIRST_CONSTRUCTION_PROTOCOL
 

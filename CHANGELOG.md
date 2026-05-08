@@ -2,6 +2,32 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.0.8] - 2026-05-08
+
+**Added**
+
+- 新增内置 `image-generation` skill，支持 OpenAI GPT Image、Nano Banana 和 Volcengine Ark Seedream 三个图片生成渠道，并提供对应 provider reference 与命令行 runner。
+- 图片生成 runner 默认保存到 `generated_images`，JSON 结果包含 `output_dir` 与 `absolute_output_dir`，便于后续工具把本地生成文件转为浏览器可访问链接。
+- 新增图片生成 skill 测试，覆盖 provider 资源加载、脚本输出目录、环境变量去重、`.env` 自动加载、模型别名、Seedream 密钥安全和内置 skill 读取。
+
+**Changed**
+
+- 项目运行时版本从 `1.0.7` 更新为 `1.0.8`，同步 `VERSION`、运行时 fallback 版本、管理后台 package 元数据和 README 徽章；Python pip 包元数据暂保持 `1.0.7`，本次不发布。
+- 图片生成渠道环境变量收敛为每个 provider 一个 key：OpenAI 使用 `OPENAI_IMAGE_KEY`，Nano Banana 使用 `GOOGLE_IMAGE_KEY`，Seedream 使用 `ARK_API_KEY`；OpenAI 兼容渠道仅通过可选 `OPENAI_BASE_URL` 或 `--base-url` 覆盖 endpoint。
+- 图片生成 runner 会自动读取项目 `.env` 并补入当前脚本进程环境，不再要求调用方先手动执行 `set -a; . ./.env; set +a`。
+- Agentic 内置提示词明确要求 Markdown 图片只能使用浏览器可访问 URL，例如 `/api/download/...`、签名 `/api/files/...?token=...`、HTTP(S) 或 data URL。
+- `image-generation` skill 文档明确本地 `output_paths`、`output_dir`、`absolute_output_dir` 不是浏览器 URL；若脚本只返回本地文件路径，最终展示前应先调用 `create_download_url`。
+
+**Fixed**
+
+- 修复内置智能体生成图片后可能把 `generated_images/...` 本地相对路径直接写入 Markdown，导致 Dashboard 将其解析为 `/dashboard/generated_images/...` 并无法展示图片的问题。
+- 修复图片生成脚本直接运行时无法读取项目 `.env` 中 provider API Key，容易因环境变量未 export 而失败的问题。
+
+**Tests**
+
+- 新增 Agentic prompt 回归测试，确保提示词不再允许 `URL-or-path`，并明确要求本地图片文件先转换为浏览器可访问下载 URL。
+- 扩展内置 skill 描述测试，覆盖 `image-generation` skill 的高层路由描述。
+
 ## [1.0.7] - 2026-05-07
 
 **Changed**

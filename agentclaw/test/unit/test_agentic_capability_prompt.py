@@ -68,6 +68,7 @@ def test_builtin_skill_descriptions_keep_high_level_operational_boundaries():
     creator_skill = SkillParser.parse(skills_dir / "agent_creator")
     skill_creator = SkillParser.parse(skills_dir / "skill_creator")
     clawhub = SkillParser.parse(skills_dir / "clawhub")
+    image_generation = SkillParser.parse(skills_dir / "image-generation")
 
     assert api_skill.description.startswith("Run existing workflows via local /_internal/* relay")
     assert "relay handles internal authentication" in api_skill.description
@@ -80,8 +81,10 @@ def test_builtin_skill_descriptions_keep_high_level_operational_boundaries():
     assert skill_creator.description.startswith("Create or modify AgentClaw skill packages")
     assert "trigger descriptions" in skill_creator.description
     assert clawhub.description.startswith("Use the ClawHub CLI")
+    assert image_generation.description.startswith("Generate, edit, and iterate raster images")
+    assert "visual asset creation" in image_generation.description
 
-    for skill in [api_skill, coding_skill, creator_skill, skill_creator, clawhub]:
+    for skill in [api_skill, coding_skill, creator_skill, skill_creator, clawhub, image_generation]:
         desc_lower = skill.description.lower()
         assert "do not" not in desc_lower
         assert "don't" not in desc_lower
@@ -102,6 +105,25 @@ def test_builtin_skill_routing_terms_survive_compact_description_preview():
     assert "test" in coding_preview
     assert "Create or modify" in creator_preview
     assert "workflows and agents" in creator_preview
+
+
+@pytest.mark.asyncio
+async def test_agentic_prompt_uses_browser_safe_image_urls_not_local_paths():
+    node = LLMNode(
+        id="agent",
+        system_prompt="You are AgentClaw.",
+        agent_style="agentic",
+    )
+
+    prompt = await node._resolve_prompt(
+        {"user_input": "生成一张图片并展示"},
+        WorkflowContext(workflow_id="__builtin__", workflow_name="AgentClaw"),
+    )
+
+    assert "create_download_url" in prompt
+    assert "generated_images/..." in prompt
+    assert "/dashboard/generated_images/..." in prompt
+    assert "URL-or-path" not in prompt
 
 
 @pytest.mark.asyncio
