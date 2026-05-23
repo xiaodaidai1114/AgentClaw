@@ -4,9 +4,11 @@
 
     <!-- 工具栏 -->
     <n-space justify="space-between" align="center" style="margin-bottom: 16px;">
-      <n-input v-model:value="searchQuery" :placeholder="t('workflows.searchPlaceholder')" clearable style="width: 300px;">
-        <template #prefix>🔍</template>
-      </n-input>
+      <n-space :size="12" align="center" class="toolbar-left">
+        <n-input v-model:value="searchQuery" :placeholder="t('workflows.searchPlaceholder')" clearable style="width: 300px;">
+          <template #prefix>🔍</template>
+        </n-input>
+      </n-space>
       <n-space :size="12">
         <n-select
           v-model:value="sortBy"
@@ -28,7 +30,7 @@
         :key="wf.id"
         hoverable
         :class="['agent-card', { 'warning-card': wf.stats_24h?.execution_count > 0 && wf.stats_24h?.success_rate < 90 }]"
-        @click="$router.push(`/workflows/${wf.id}/chat`)"
+        @click="openWorkflow(wf)"
         style="cursor: pointer;"
       >
         <template #header>
@@ -148,18 +150,25 @@ const columns = computed(() => [
   { title: t('workflows.avgDuration24h'), key: 'dur', width: 110, render: (row) => formatDuration(row.stats_24h?.avg_duration_ms) },
   { title: t('workflows.lastExecution24h'), key: 'last', width: 110, render: (row) => formatLastExecution(row.stats_24h?.last_execution_time) },
   { title: t('dashboard.actions'), key: 'actions', width: 120, render: (row) => h(NSpace, { size: 8 }, () => [
-    h(NButton, { text: true, size: 'small', onClick: () => router.push(`/workflows/${row.id}/chat`) }, { default: () => t('common.experience') }),
+    h(NButton, { text: true, size: 'small', onClick: () => openWorkflow(row) }, { default: () => t('common.experience') }),
     h(NButton, { text: true, type: 'primary', size: 'small', onClick: () => router.push(`/workflows/${row.id}`) }, { default: () => t('common.detail') }),
   ]) },
 ])
 
 async function fetchData() {
   try {
-    const res = await workflowsApi.list()
+    const res = await workflowsApi.list({ include_builtin: false })
     workflows.value = res.workflows
   } catch (e) {
     console.error('Failed to fetch workflows:', e)
   }
+}
+
+function openWorkflow(wf) {
+  router.push({
+    path: `/workflows/${wf.id}/chat`,
+    query: wf.recommended_input ? { seed_input: wf.recommended_input } : {},
+  })
 }
 
 function formatPercent(val) {
@@ -204,6 +213,10 @@ onMounted(fetchData)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 20px;
+}
+
+.toolbar-left {
+  min-width: 0;
 }
 
 .agent-card {
@@ -337,6 +350,15 @@ onMounted(fetchData)
 }
 
 @media (max-width: 640px) {
+  .toolbar-left {
+    width: 100%;
+  }
+
+  .toolbar-left :deep(.n-input),
+  .toolbar-left :deep(.n-select) {
+    width: 100% !important;
+  }
+
   .card-stats,
   .card-actions {
     grid-template-columns: 1fr;

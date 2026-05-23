@@ -1,0 +1,18 @@
+{
+  "id": "gif_agent",
+  "name": "06A GIF Creator Agent",
+  "description": "显式技能注入示例：使用随模板附带的 slack-gif-creator skill 辅助创建 Slack GIF。",
+  "tags": [
+    "示例",
+    "Skills",
+    "GIF",
+    "Agent"
+  ],
+  "entry": "agents/gif_agent.py",
+  "workflow_id": "gif_agent",
+  "recommended_input": "How do I create a bouncing ball GIF for Slack emoji?",
+  "category": "example",
+  "workflow": "agents/gif_agent.py",
+  "copyable": true,
+  "inspectable": true
+}

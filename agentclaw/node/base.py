@@ -151,7 +151,11 @@ class FunctionNode(BaseNode):
         if asyncio.iscoroutinefunction(self.handler):
             result = await (self.handler(state, context) if has_context else self.handler(state))
         else:
-            result = self.handler(state, context) if has_context else self.handler(state)
+            call = self.handler
+            if has_context:
+                result = await asyncio.to_thread(call, state, context)
+            else:
+                result = await asyncio.to_thread(call, state)
         
         if result is not None and isinstance(result, dict):
             state.update(result)

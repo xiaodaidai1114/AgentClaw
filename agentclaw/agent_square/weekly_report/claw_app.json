@@ -1,0 +1,18 @@
+{
+  "id": "weekly_report",
+  "name": "09 周报生成器",
+  "description": "高级 LLM 配置示例：模型参数、重试、上下文控制、流式周报生成。",
+  "tags": [
+    "示例",
+    "LLM配置",
+    "周报",
+    "流式输出"
+  ],
+  "entry": "agents/weekly_report.py",
+  "workflow_id": "weekly_report",
+  "recommended_input": "完成用户认证模块重构\n修复 3 个线上 bug\n和前端对接新版 API\nReview 了两个 PR",
+  "category": "example",
+  "workflow": "agents/weekly_report.py",
+  "copyable": true,
+  "inspectable": true
+}

@@ -66,6 +66,7 @@ const appVersion = __APP_VERSION__
 
 const baseMenuItems = computed(() => [
   { label: t('nav.builtin'), key: '/builtin', icon: '⚡' },
+  { label: t('nav.templates'), key: '/templates', icon: '📦' },
   { label: t('nav.workflows'), key: '/workflows', icon: '🤖' },
   { label: t('nav.knowledgebases'), key: '/knowledgebases', icon: '📚' },
   { label: t('nav.scheduler'), key: '/scheduler', icon: '⏰' },
@@ -89,6 +90,7 @@ const collapsedMenuOptions = computed(() => baseMenuItems.value.map(item => ({
 const activeKey = computed(() => {
   const path = route.path
   if (path === '/' || path === '/builtin') return '/builtin'
+  if (path.startsWith('/templates')) return '/templates'
   if (path === '/dashboard' || path.startsWith('/traces')) return '/dashboard'
   if (path.startsWith('/workflows')) return '/workflows'
   if (path.startsWith('/scheduler')) return '/scheduler'

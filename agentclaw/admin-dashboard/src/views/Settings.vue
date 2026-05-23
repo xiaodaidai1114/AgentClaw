@@ -29,7 +29,8 @@
               </n-form-item>
               <n-form-item :label="t('settingsForm.global.recursionLimit')">
                 <div class="form-control-row">
-                  <n-input-number v-model:value="globalForm.recursion_limit" :min="1" :max="500" class="form-input" />
+                  <n-input-number v-model:value="globalForm.recursion_limit" :min="0" :max="1000000" class="form-input" />
+                  <n-text depth="3" class="form-hint">{{ t('common.noLimit') }}</n-text>
                 </div>
               </n-form-item>
               <n-form-item :label="t('settingsForm.global.maxToolRounds')">
@@ -377,7 +378,8 @@
                   <n-text depth="3" class="form-hint">{{ t('common.noLimit') }}</n-text>
                 </n-form-item>
                 <n-form-item :label="t('settingsForm.global.recursionLimit')">
-                  <n-input-number v-model:value="workflowForm.recursion_limit" :min="1" :max="500" class="form-input" @update:value="workflowChanged = true" />
+                  <n-input-number v-model:value="workflowForm.recursion_limit" :min="0" :max="1000000" class="form-input" @update:value="workflowChanged = true" />
+                  <n-text depth="3" class="form-hint">{{ t('common.noLimit') }}</n-text>
                 </n-form-item>
                 <n-form-item :label="t('settingsForm.workflow.cancelOnDisconnect')">
                   <n-switch v-model:value="workflowForm.cancel_on_disconnect" @update:value="workflowChanged = true" />
@@ -669,6 +671,7 @@ import {
 import PageHeader from '../components/PageHeader.vue'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
 import { workflowsApi, modelsApi, settingsApi } from '../api'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 import { toConversationModelOptions } from '../utils/models'
 
 const message = useMessage()
@@ -681,7 +684,7 @@ const showScopedConfig = false
 // ============================================================
 const MOCK_GLOBAL = {
   timeout: 300,
-  recursion_limit: 50,
+  recursion_limit: 0,
   max_tool_rounds: 0,
   max_context_messages: 0,
   tool_result_max_length: 20000,
@@ -1228,16 +1231,16 @@ async function onWorkflowSelect(workflowId) {
     return
   }
   try {
-    const detail = await workflowsApi.get(workflowId)
+    const detail = await withReadinessRetry(() => workflowsApi.get(workflowId))
     const workflow = normalizeWorkflowDetail(detail)
     workflowConfig.value = workflow
     try {
-      const cfg = await settingsApi.getWorkflow(workflowId)
+      const cfg = await withReadinessRetry(() => settingsApi.getWorkflow(workflowId))
       workflowForm.value = { ...cfg }
     } catch {
       workflowForm.value = {
         timeout: workflow.timeout ?? 300,
-        recursion_limit: workflow.recursion_limit ?? 50,
+        recursion_limit: workflow.recursion_limit ?? 0,
         cancel_on_disconnect: workflow.cancel_on_disconnect ?? true,
         tracing: workflow.tracing ?? true,
         auth_required: workflow.auth_required ?? false,
@@ -1466,7 +1469,7 @@ async function onNodeWorkflowSelect(workflowId) {
   if (!workflowId) return
 
   try {
-    const detail = await workflowsApi.get(workflowId)
+    const detail = await withReadinessRetry(() => workflowsApi.get(workflowId))
     const workflow = normalizeWorkflowDetail(detail)
     nodeList.value = (workflow.nodes || []).map(n => ({
       id: n.id || n.name,

@@ -1,0 +1,18 @@
+{
+  "id": "approval",
+  "name": "04 Human Review",
+  "description": "人工审核示例：LLM 起草客服回复，HumanNode 中断等待审核，再根据反馈继续。",
+  "tags": [
+    "示例",
+    "人工审核",
+    "HumanNode",
+    "客服"
+  ],
+  "entry": "agents/approval.py",
+  "workflow_id": "approval",
+  "recommended_input": "我的订单已经等了两周还没到，客服电话也打不通。",
+  "category": "example",
+  "workflow": "agents/approval.py",
+  "copyable": true,
+  "inspectable": true
+}

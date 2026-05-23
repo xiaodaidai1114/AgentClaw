@@ -2,6 +2,64 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.0.9] - 2026-05-22
+
+**Added**
+
+- 新增 Dashboard “模板库”页面，支持浏览 AgentClaw 随包发布的官方模板、按分类/关键词筛选、查看推荐输入，并一键导入到当前项目或导入后直接打开体验。
+- 新增 `agentclaw.agent_square` 官方模板库包，将原 `agentclaw/examples` 示例迁移为可复制模板，并随包提供 `Hello World`、意图路由、工具调用、人工审核、并行分析、GIF Creator、MCP Agent、数据报告、周报、文档分析、知识库问答等模板。
+- 新增两个游戏型模板：`海龟汤主持人` 和 `AI 狼人杀主持人`。狼人杀模板提供 12 人狼王守卫局的主状态机与角色子工作流，支持隐藏身份、私有视角、警长竞选、放逐、遗言、警徽移交、猎人/狼王开枪、白痴翻牌、自爆和模型复盘。
+- 新增模板库后端 API：列出模板、查询导入状态、复制模板到项目 `agents/`、更新 `agents/__init__.py`、热注册导入后的工作流，并兼容旧的 Agent Square 列表接口。
+- 新增 `WorkflowTemplate`，支持用变量参数化节点 ID、提示词、输出字段和边，实例化为普通 `Workflow`，便于复用结构化工作流定义。
+- 新增 `StateExtractNode` 和 `graph.state_path` 工具，用于通过 LLM 从文本中抽取结构化状态，并支持点路径读写、append、shallow merge 和 deep merge。
+- 新增 `HumanInput` 输入模式，`HumanNode` 现在可以显式声明文本框、按钮、确认按钮或基于 state 动态生成的输入控件。
+- 新增 `SubWorkflowNode` 的嵌套状态映射能力，支持 `readonly_input_map`、`state_map`、嵌套 `output_map`、实例 ID、派生 thread_id、自定义 thread_id、合并策略，以及可选隐藏子工作流内部节点事件。
+- 新增 SubWorkflowNode 对子工作流 HumanNode 中断的桥接能力，父工作流可以中断、恢复，并把用户输入继续传回子工作流。
+- 新增中文最佳实践文档，补充声明式节点、显式业务 state、`StateExtractNode`、多轮 `HumanNode`、多角色 `SubWorkflowNode` 和 `WorkflowTemplate` 的选型建议与示例。
+- 新增 Claw Apps / 模板库展示方案文档，梳理官方模板库的产品入口、导入语义、目录约定、打包边界和首批模板选择原则。
+
+**Changed**
+
+- 项目版本从 `1.0.8` 更新为 `1.0.9`，同步 `VERSION`、运行时 fallback 版本、Python 包元数据、`uv.lock`、Dashboard package 元数据和 README 徽章。
+- Python 发布包现在包含 `agent_square/**/*`，官方模板库会随 `agentclaw-ai` 一起分发；旧 `agentclaw/examples` 标准项目示例已迁移为模板库应用。
+- 模板导入后的工作流现在会作为项目 `agents.<app_id>` 包加载，并继承当前项目模型、MCP 与 skills 配置。
+- Dashboard 智能体列表默认只展示用户工作流，内置模板改由“模板库”导入；打开工作流时会携带模板推荐输入作为一次性 `seed_input`。
+- AgentChat 现在会根据 workflow schema 区分直接聊天输入和参数启动工作流；纯参数型工作流会在参数面板外显示启动提示与“开始运行”按钮，运行时自动创建会话，并说明不能直接输入的原因。
+- AgentChat 参数启动入口的“开始运行”按钮增加深色 fallback 背景，避免主题变量未加载时入口不可见。
+- AI 狼人杀模板收敛了流程与提示词边界：玩家操作通过结构化动作触发，AI 发言遵守夜间信息边界、验人时间线、警长票/放逐票语义，猎人和狼王开枪状态按死亡原因结算。
+- AgentChat 支持 HumanNode 的按钮输入模式、结构化按钮值恢复、`next_input_info`、中断后输入控件恢复、运行中流式草稿本地持久化，以及空会话的 workflow welcome 展示。
+- 工作流运行时默认 `recursion_limit` 改为 `0`，表示 AgentClaw 层不限制；传给 LangGraph 时映射为足够大的运行时上限，仍可显式设置正数限制。
+- 工作流配置自动发现现在会把全局项目目录、`models.json`、`mcp.json` 和 skills 目录作为候选路径，支持从模板库导入到 `agents/<template>/...` 的嵌套工作流。
+- 内置工作流结构输出新增 `agent_square_app_id` 和 `recommended_input`，工作流列表 API 同步暴露这些字段。
+- Python 顶层导出新增 `WorkflowTemplate`、`HumanInput`、`SubWorkflowNode` 和 `StateExtractNode`，应用代码可直接从 `agentclaw` 导入这些新能力。
+- 同步函数节点和同步 `CustomNode.process()` 改为在线程中执行，避免阻塞事件循环。
+- MCP 默认工具超时从 300 秒收敛为 30 秒；`python`、`javascript`、`shell`、`execute_sudo_command` 等长任务工具默认保留 120 秒，并允许环境变量统一覆盖。
+- MCP 配置支持 JSONC 注释、`type: "remote"` 兼容写法、URL server 自动传输检测结果回写；远程 HTTP MCP 工具调用不再被同 server 锁串行化，stdio server 仍保持串行。
+- 重新构建 Dashboard `dist` 产物，使模板库、聊天输入模式、会话恢复和版本更新进入运行包。
+
+**Fixed**
+
+- 修复 Dashboard 新建、导入或热注册资源后立即打开详情页时，前端偶发读到旧状态或 404 的问题，关键读取路径加入短暂 readiness retry。
+- 修复 AgentChat 在工作流中断、刷新或远端会话暂为空时丢失流式输出/等待输入状态的问题；现在会优先保留本地更完整的消息快照，并恢复按钮输入。
+- 修复运行中流式草稿最终保存时重复追加 assistant 消息的问题，完成时会替换已有草稿。
+- 修复 HumanNode 按钮值为 `False`、数字或结构化值时被字符串化或丢失的问题。
+- 修复 Admin 通过文件热注册包含 `dataclass` 自定义节点的工作流时，模块未提前写入 `sys.modules` 可能导致加载失败的问题。
+- 修复并行分支更新嵌套 dict 状态时互相覆盖的问题。
+- 修复动态条件边返回节点列表时内置执行器未按并行分支执行的问题。
+- 修复 MCP 工具超时后连接状态残留的问题，超时会断开并清理客户端状态。
+
+**Tests**
+
+- 新增模板库和 Agent Square 测试，覆盖模板 manifest、示例迁移、资源文件复制、项目导入、热注册、Dashboard 导入 API、海龟汤和狼人杀模板结构。
+- 新增工作流运行时测试，覆盖 `WorkflowTemplate`、`StateExtractNode`、嵌套 state path、SubWorkflowNode 多实例隔离、子工作流中断恢复、并行分支合并、动态并行条件边和事件隐藏。
+- 新增 HumanNode 输入模式测试，覆盖文本/按钮混合模式、审批默认按钮、动态按钮、结构化恢复值和 `False` 按钮值。
+- 新增 Dashboard 前端测试，覆盖模板库页面、聊天按钮输入、seed input、welcome 消息、流式草稿持久化、中断态恢复、对话合并、参数启动型工作流入口和 eventual consistency retry。
+- 新增 AgentChat 启动按钮样式回归测试，确保“开始运行”按钮拥有非透明 fallback 背景。
+- 新增 Admin API 契约测试，覆盖模板库列表/导入接口、工作流列表的模板元数据，以及文件热注册 `dataclass` 节点工作流。
+- 新增模板聊天入口结构测试，确保官方模板至少提供 `user_input` 直接输入或 `form_config` 参数启动路径，并覆盖 `08 数据报告生成器`、`09 周报生成器`、`10 Document Analyzer` 的预期输入结构。
+- 新增 MCP 测试，覆盖 JSONC 配置、remote 类型兼容、自动传输回写、工具超时、超时断连，以及远程 HTTP 并发/stdio 串行调用差异。
+- 新增事件循环安全、运行时配置、模板打包、Demo2 模型配置和 Workflow 设置 API 契约测试。
+
 ## [1.0.8] - 2026-05-08
 
 **Added**

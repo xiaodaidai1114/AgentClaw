@@ -317,6 +317,7 @@
 <script>
 import { debugApi, workflowsApi } from '../api'
 import WorkflowGraph from '../components/WorkflowGraph.vue'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 export default {
   name: 'WorkflowDebug',
@@ -455,7 +456,7 @@ export default {
     },
     async loadWorkflow() {
       try {
-        const data = await workflowsApi.get(this.workflowId)
+        const data = await withReadinessRetry(() => workflowsApi.get(this.workflowId))
         this.workflowName = data.workflow.name
         this.nodes = data.workflow.nodes || []
         this.edges = data.workflow.edges || []

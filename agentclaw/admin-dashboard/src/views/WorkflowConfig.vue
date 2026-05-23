@@ -72,7 +72,8 @@
           </div>
           <div class="form-field">
             <label class="field-label">{{ t('workflowConfig.workflow.recursionLimit') }}<n-tooltip v-if="tips['递归限制']"><template #trigger><span class="tip-icon">?</span></template>{{ tips['递归限制'] }}</n-tooltip></label>
-            <n-input-number v-model:value="workflowForm.recursion_limit" :min="1" :max="500" @update:value="workflowChanged = true" />
+            <n-input-number v-model:value="workflowForm.recursion_limit" :min="0" :max="1000000" @update:value="workflowChanged = true" />
+            <span class="field-hint">{{ t('common.noLimit') }}</span>
           </div>
           <div class="form-field">
             <label class="field-label">{{ t('workflowConfig.workflow.publicConversationLimit') }}</label>
@@ -246,6 +247,7 @@ import {
   localizeBuiltinWorkflowConfig,
 } from '../utils/builtinWorkflowI18n'
 import { toConversationModelOptions } from '../utils/models'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const route = useRoute()
 const router = useRouter()
@@ -333,14 +335,18 @@ function getNodeTypeLabel(type) {
   }[type] || type
 }
 async function fetchWorkflow() {
-  const res = await workflowsApi.get(workflowId.value)
+  const res = await withReadinessRetry(() => workflowsApi.get(workflowId.value))
   const localizedWorkflow = localizeBuiltinWorkflow(res.workflow, t)
   workflow.value = localizedWorkflow
   nodeList.value = (localizedWorkflow?.nodes || []).map((node) => ({ id: node.id || node.name, type: normalizeNodeType(node.type), type_label: getNodeTypeLabel(normalizeNodeType(node.type)), config: node }))
 }
 
 async function fetchWorkflowConfig() {
-  const cfg = localizeBuiltinWorkflowConfig(await settingsApi.getWorkflow(workflowId.value), workflowId.value, t)
+  const cfg = localizeBuiltinWorkflowConfig(
+    await withReadinessRetry(() => settingsApi.getWorkflow(workflowId.value)),
+    workflowId.value,
+    t,
+  )
   workflowForm.value = {
     timeout: cfg.timeout,
     recursion_limit: cfg.recursion_limit,

@@ -1,0 +1,18 @@
+{
+  "id": "tool_agent",
+  "name": "03 Tool Agent",
+  "description": "自定义工具调用示例：搜索、计算、天气等工具由 LLM 按需调用。",
+  "tags": [
+    "示例",
+    "工具调用",
+    "Agent",
+    "流式输出"
+  ],
+  "entry": "agents/tool_agent.py",
+  "workflow_id": "tool_agent",
+  "recommended_input": "帮我计算 15 * 7 + 23，再查一下 Tokyo 的天气。",
+  "category": "example",
+  "workflow": "agents/tool_agent.py",
+  "copyable": true,
+  "inspectable": true
+}

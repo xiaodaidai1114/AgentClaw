@@ -50,7 +50,11 @@ class WorkflowService:
         
         workflows = self._registry.list_all()
         if not include_builtin:
-            workflows = [wf for wf in workflows if wf.id != "__builtin__"]
+            workflows = [
+                wf
+                for wf in workflows
+                if wf.id != "__builtin__" and not bool(getattr(wf, "is_builtin", False))
+            ]
         return [self._to_info(wf) for wf in workflows]
     
     def get_workflow(self, workflow_id: str) -> Optional[dict]:
@@ -288,6 +292,8 @@ class WorkflowService:
             "description": getattr(workflow, "description", ""),
             "node_count": len(workflow._nodes) if hasattr(workflow, "_nodes") else 0,
             "is_builtin": is_builtin,
+            "agent_square_app_id": getattr(workflow, "agent_square_app_id", "") or "",
+            "recommended_input": getattr(workflow, "recommended_input", "") or "",
             "public_share_enabled": False if is_builtin else bool(getattr(workflow, "public_share_enabled", False)),
             "public_share_token": "" if is_builtin else (getattr(workflow, "public_share_token", "") or ""),
             "rate_limit": getattr(workflow, "rate_limit", "") or "",

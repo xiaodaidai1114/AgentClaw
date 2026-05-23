@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentclaw-ai"
-version = "1.0.7"
+version = "1.0.9"
 description = "AgentClaw turns one-sentence ideas into reusable Claw capabilities with declarative workflows, computer/browser/code/file control, MCP, Skills, memory, knowledge bases, tracing, scheduling, and API/MCP publishing."
 readme = "README.md"
 license = "Apache-2.0"
@@ -116,6 +116,7 @@ agentclaw = [
     "docker/stop.sh",
     "docker/.env.example",
     "skills/builtin_skills/**/*",
+    "agent_square/**/*",
     "channels/wecom_worker/*",
 ]
 

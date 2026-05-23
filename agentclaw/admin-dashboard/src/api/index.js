@@ -93,6 +93,11 @@ export const dashboardApi = {
   getTrends: (timeRange = '24h') => api.get('/dashboard/trends', { params: { time_range: timeRange } }),
 }
 
+export const templateLibraryApi = {
+  list: () => api.get('/dashboard/template-library/apps'),
+  importApp: (id, data = {}) => api.post(`/dashboard/template-library/apps/${id}/import`, data),
+}
+
 // Workflows API
 export const workflowsApi = {
   list: (params) => api.get('/workflows', { params }),
@@ -111,6 +116,32 @@ export const executionApi = {
   compressContext: (workflowId, conversationId) => axios.post('/api/workflow/compress', { workflow_id: workflowId, conversation_id: conversationId }, {
     headers: getAdminAuthHeaders() || {},
   }).then(response => response.data),
+}
+
+export function buildWorkflowRunInputs({
+  baseInputs = {},
+  userInput,
+  inputField = '',
+  humanInput = null,
+} = {}) {
+  const inputs = { ...baseInputs }
+
+  if (humanInput && humanInput.field) {
+    inputs[humanInput.field] = humanInput.value
+    inputs.__human_input__ = {
+      kind: 'button',
+      label: humanInput.label,
+      value: humanInput.value,
+      field: humanInput.field,
+    }
+    return inputs
+  }
+
+  if (userInput !== null && userInput !== undefined && inputField) {
+    inputs[inputField] = userInput
+  }
+
+  return inputs
 }
 
 // Traces API

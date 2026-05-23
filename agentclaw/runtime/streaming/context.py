@@ -196,6 +196,8 @@ class OutputChannel:
     ):
         """推送 node_started 事件"""
         self._current_node = node_id
+        if _suppress_node_events_var.get() > 0:
+            return
         self._node_index += 1
         data = {
             "id": f"{self.workflow_run_id}-{self._node_index}",
@@ -226,6 +228,9 @@ class OutputChannel:
         parallel_group_id: Optional[str] = None,
     ):
         """推送 node_finished 事件"""
+        if _suppress_node_events_var.get() > 0:
+            self._current_node = None
+            return
         data = {
             "id": f"{self.workflow_run_id}-{self._node_index}",
             "node_id": node_id,
@@ -735,6 +740,10 @@ class OutputChannel:
 _output_channel_var: ContextVar[Optional[OutputChannel]] = ContextVar(
     '_output_channel', 
     default=None
+)
+_suppress_node_events_var: ContextVar[int] = ContextVar(
+    '_suppress_node_events',
+    default=0,
 )
 
 

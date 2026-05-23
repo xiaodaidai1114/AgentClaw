@@ -281,6 +281,7 @@ import PageHeader from '../components/PageHeader.vue'
 import { tracesApi } from '../api'
 import { durationBarPercent, formatDuration, formatDateTime, formatTokens } from '../composables/useFormatters'
 import { useResizableDrawer } from '../composables/useResizableDrawer'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const route = useRoute()
 const { t, locale } = useI18n()
@@ -381,7 +382,7 @@ function selectNode(node) {
 
 async function fetchData() {
   try {
-    trace.value = await tracesApi.get(traceId.value)
+    trace.value = await withReadinessRetry(() => tracesApi.get(traceId.value))
   } catch (e) {
     console.error('Failed to fetch trace:', e)
   }

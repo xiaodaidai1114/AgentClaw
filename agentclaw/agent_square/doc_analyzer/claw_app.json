@@ -1,0 +1,18 @@
+{
+  "id": "doc_analyzer",
+  "name": "10 Document Analyzer",
+  "description": "文档处理示例：上传多个文档，DocumentNode 解析后由 LLM 综合分析。",
+  "tags": [
+    "示例",
+    "文档处理",
+    "DocumentNode",
+    "文件上传"
+  ],
+  "entry": "agents/doc_analyzer.py",
+  "workflow_id": "doc_analyzer",
+  "recommended_input": "上传文档后，问题填写：请总结这些文档的主要内容。",
+  "category": "example",
+  "workflow": "agents/doc_analyzer.py",
+  "copyable": true,
+  "inspectable": true
+}

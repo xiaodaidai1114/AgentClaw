@@ -1,0 +1,13 @@
+{
+  "id": "turtle_soup",
+  "name": "海龟汤主持人",
+  "description": "多轮互动的海龟汤游戏主持人：生成原创汤面、隐藏汤底、判定问题并在答对后结算。",
+  "category": "game",
+  "tags": ["游戏", "推理", "多轮互动", "隐藏信息"],
+  "entry": "agents/turtle_soup.py",
+  "workflow": "agents/turtle_soup.py",
+  "workflow_id": "turtle_soup",
+  "recommended_input": "我想玩一个反转强一点、但不要太吓人的日常系海龟汤。",
+  "copyable": true,
+  "inspectable": true
+}

@@ -58,6 +58,8 @@ class WorkflowInfo(BaseModel):
     description: Optional[str] = None
     node_count: int = 0
     is_builtin: bool = False
+    agent_square_app_id: Optional[str] = None
+    recommended_input: Optional[str] = None
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
     rate_limit: Optional[str] = None
@@ -88,6 +90,8 @@ class WorkflowStructure(BaseModel):
     user_input_field: Optional[str] = None  # 用户输入字段名
     welcome: Optional[str] = None  # 前端开场白
     is_builtin: bool = False  # 是否为内置智能体
+    agent_square_app_id: Optional[str] = None
+    recommended_input: Optional[str] = None
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
     rate_limit: Optional[str] = None

@@ -155,7 +155,7 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
         ),
         variables=(
             EnvVarSpec("WORKFLOW_TIMEOUT", "300", "单次工作流执行超时秒数。", commented=False),
-            EnvVarSpec("WORKFLOW_RECURSION_LIMIT", "50", "LangGraph 递归/步数限制。", commented=False),
+            EnvVarSpec("WORKFLOW_RECURSION_LIMIT", "0", "LangGraph 递归/步数限制；0 表示不限制。", commented=False),
             EnvVarSpec("MAX_TOOL_ROUNDS", "0", "普通模式最大工具轮数；0 表示不限制。", commented=False),
             EnvVarSpec("MAX_CONTEXT_MESSAGES", "0", "普通模式最大上下文消息数；0 表示不限制。", commented=False),
             EnvVarSpec("TOOL_RESULT_MAX_LENGTH", "20000", "注入 LLM 的单条工具结果最大字符数。", commented=False),
@@ -240,7 +240,7 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
         ),
         variables=(
             EnvVarSpec("AGENTCLAW_MCP_CONNECT_TIMEOUT", "10.0", "连接单个 MCP Server 的超时秒数。", commented=False),
-            EnvVarSpec("AGENTCLAW_MCP_TOOL_TIMEOUT", "300", "单次 MCP 工具调用硬超时秒数，避免远程或异常 MCP Server 长期无响应。", commented=False),
+            EnvVarSpec("AGENTCLAW_MCP_TOOL_TIMEOUT", "30", "单次 MCP 工具调用硬超时秒数，避免远程或异常 MCP Server 长期无响应。", commented=False),
             EnvVarSpec("AGENTCLAW_MCP_PROXY", "", "远程 MCP 连接代理；localhost/127.0.0.1 会自动跳过。"),
             EnvVarSpec("SEARXNG_BASE_URL", "", "search-tools 使用的 SearXNG 地址；留空不启用 search-tools。"),
             EnvVarSpec("DOWNLOAD_BASE_URL", "/api/download", "download-tools 暴露下载文件时使用的 URL 前缀。"),

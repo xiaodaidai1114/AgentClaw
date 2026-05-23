@@ -220,7 +220,7 @@ class CustomNode(ABC):
                     if asyncio.iscoroutinefunction(self.process):
                         result = await self.process(**kwargs)
                     else:
-                        result = self.process(**kwargs)
+                        result = await asyncio.to_thread(self.process, **kwargs)
                 
                 if result and isinstance(result, dict):
                     state.update(result)

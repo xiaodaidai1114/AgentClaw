@@ -363,6 +363,42 @@ def test_workflow_settings_can_disable_agentic_capability_injection(tmp_path):
     assert workflow.inject_as_agentic_capability is False
 
 
+def test_workflow_settings_can_save_unlimited_recursion_limit(tmp_path):
+    workflow = SimpleNamespace(
+        id="wf-1",
+        name="Workflow 1",
+        timeout=300,
+        recursion_limit=50,
+        cancel_on_disconnect=True,
+        auth_required=False,
+        allowed_roles=None,
+        rate_limit=None,
+        tracing=True,
+        description="",
+        welcome="",
+        public_share_enabled=False,
+        public_share_token="",
+        workflow_api_key="",
+        public_conversation_limit=20,
+        public_message_limit=200,
+        inject_as_agentic_capability=True,
+        _candidate_base_dirs=lambda: [tmp_path],
+    )
+
+    class Registry:
+        @classmethod
+        def get(cls, workflow_id):
+            return workflow if workflow_id == "wf-1" else None
+
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    service = SettingsService(registry=Registry)
+
+    updated = service.update_workflow("wf-1", {"recursion_limit": 0})
+
+    assert updated["recursion_limit"] == 0
+    assert workflow.recursion_limit == 0
+
+
 def test_builtin_workflow_info_never_exposes_public_share_state():
     from agentclaw.api.services.workflow_service import WorkflowService
 

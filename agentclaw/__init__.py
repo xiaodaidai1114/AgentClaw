@@ -21,13 +21,16 @@ apply_windows_selector_event_loop_policy()
 # 核心模块
 from agentclaw.graph.workflow import Workflow
 from agentclaw.graph.context import WorkflowContext, CancelToken
+from agentclaw.graph.template import WorkflowTemplate
 
 # 节点
 from agentclaw.node.types import ErrorStrategy
 from agentclaw.node.base import BaseNode, FunctionNode
 from agentclaw.node.custom import CustomNode, SyncNode, node
 from agentclaw.node.llm import LLMNode
-from agentclaw.node.human import HumanNode
+from agentclaw.node.human import HumanInput, HumanNode
+from agentclaw.node.sub_workflow import SubWorkflowNode
+from agentclaw.node.state_extract import StateExtractNode
 from agentclaw.node.mcp import MCPNode, MCPPipelineNode
 from agentclaw.node.document import DocumentNode, DocumentExtractNode
 from agentclaw.node.knowledgebase import KnowledgeBaseNode
@@ -88,12 +91,16 @@ __all__ = [
     "__version__",
     # Workflow
     "Workflow",
+    "WorkflowTemplate",
     "BaseNode",
     "CustomNode",
     "SyncNode",
     "node",  # 函数式节点装饰器
     "LLMNode",
+    "HumanInput",
     "HumanNode",
+    "SubWorkflowNode",
+    "StateExtractNode",
     "FunctionNode",
     "MCPNode",
     "MCPPipelineNode",

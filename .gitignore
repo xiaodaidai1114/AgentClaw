@@ -40,3 +40,4 @@ agentclaw/channels/wecom_worker/node_modules/
 agentclaw/admin-dashboard/archive.tar.gz
 .claudeignore
 .vscode/
+AGENTS.md

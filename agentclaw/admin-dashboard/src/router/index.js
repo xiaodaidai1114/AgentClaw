@@ -15,6 +15,11 @@ const routes = [
     redirect: '/workflows',
   },
   {
+    path: '/templates',
+    name: 'TemplateLibrary',
+    component: () => import('../views/TemplateLibrary.vue'),
+  },
+  {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('../views/Dashboard.vue'),

@@ -1,1 +1,0 @@
-import{aq as c,r as n}from"./index-CW0Z_OT8.js";function l(a){const e=n(!1),t=n(!1),s=c({...a()});function o(){Object.assign(s,a()),t.value=!1,e.value=!0}function r(u){Object.assign(s,u),t.value=!0,e.value=!0}function i(){e.value=!1}return{visible:e,isEdit:t,form:s,openCreate:o,openEdit:r,close:i}}export{l as u};

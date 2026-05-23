@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agentclaw.logger.config import get_logger
-from agentclaw.mcp.config import MCPConfig, MCPServerConfig
+from agentclaw.mcp.config import MCPConfig, MCPServerConfig, TransportType
 from agentclaw.mcp.client import MCPClient, MCPTool
 
 logger = get_logger(__name__)
@@ -111,6 +111,8 @@ class MCPManager:
             if connect_task.done():
                 self._connect_tasks.pop(server_name, None)
         self._clients[server_name] = client
+        if client.connected_transport:
+            self._config.record_detected_transport(server_name, client.connected_transport)
 
         # 为该 server 创建锁
         if server_name not in self._server_locks:
@@ -297,14 +299,13 @@ class MCPManager:
         if not client or not client.is_connected:
             raise RuntimeError(f"Server '{server_name}' 未连接")
 
-        # 获取该 server 的锁，确保同一 server 的工具串行执行
+        # stdio MCP shares one process stream, so keep it serialized.
+        # Remote HTTP transports can handle concurrent tool calls.
         lock = self._server_locks.get(server_name)
-        if lock:
+        if client.config.transport == TransportType.STDIO and lock:
             async with lock:
                 return await client.call_tool(name, arguments)
-        else:
-            # 如果没有锁（理论上不应该发生），直接调用
-            return await client.call_tool(name, arguments)
+        return await client.call_tool(name, arguments)
     
     async def call_tool_on_server(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """
@@ -324,14 +325,13 @@ class MCPManager:
         if not client.is_connected:
             raise RuntimeError(f"Server '{server_name}' 未连接")
 
-        # 获取该 server 的锁，确保同一 server 的工具串行执行
+        # stdio MCP shares one process stream, so keep it serialized.
+        # Remote HTTP transports can handle concurrent tool calls.
         lock = self._server_locks.get(server_name)
-        if lock:
+        if client.config.transport == TransportType.STDIO and lock:
             async with lock:
                 return await client.call_tool(tool_name, arguments)
-        else:
-            # 如果没有锁（理论上不应该发生），直接调用
-            return await client.call_tool(tool_name, arguments)
+        return await client.call_tool(tool_name, arguments)
     
     async def __aenter__(self):
         await self.connect_all()

@@ -80,6 +80,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NInput, NPagination, NPopconfirm, useMessage, useDialog } from 'naive-ui'
 import { knowledgebaseApi } from '../api'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const CHUNKS_PER_PAGE = 8
 const route = useRoute()
@@ -152,8 +153,8 @@ function syncChunkPage(chunkId) { const i = chunks.value.findIndex(item => item.
 async function fetchDocumentDetail() {
   try {
     const [docResponse, chunkResponse] = await Promise.all([
-      knowledgebaseApi.getDocument(route.params.id, route.params.documentId),
-      knowledgebaseApi.listChunks(route.params.id, route.params.documentId),
+      withReadinessRetry(() => knowledgebaseApi.getDocument(route.params.id, route.params.documentId)),
+      withReadinessRetry(() => knowledgebaseApi.listChunks(route.params.id, route.params.documentId)),
     ])
     document.value = { id: docResponse.id, name: docResponse.original_name, status: docResponse.status }
     chunks.value = (chunkResponse.chunks || []).map(normalizeChunk)

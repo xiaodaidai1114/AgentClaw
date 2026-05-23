@@ -1,0 +1,18 @@
+{
+  "id": "mcp_agent",
+  "name": "07 MCP Agent",
+  "description": "MCP 工具调用示例：发布本地 MCP 工具，并可结合 mcp.json 中的外部 fetch 工具。",
+  "tags": [
+    "示例",
+    "MCP",
+    "工具调用",
+    "报告"
+  ],
+  "entry": "agents/mcp_agent.py",
+  "workflow_id": "mcp_agent",
+  "recommended_input": "请分析这段运维记录并生成 Markdown 报告：凌晨任务失败，出现 timeout 和 permission denied。",
+  "category": "example",
+  "workflow": "agents/mcp_agent.py",
+  "copyable": true,
+  "inspectable": true
+}

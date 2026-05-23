@@ -82,9 +82,12 @@
                 <input v-else type="text" v-model="formData[field.name]" :disabled="!formEditable" :placeholder="field.description || ''" />
                 <div v-if="formErrors[field.name]" class="field-error">{{ formErrors[field.name] }}</div>
               </div>
-              <button v-if="canStartWorkflow" class="btn-start" @click="startWorkflow">{{ $t('agentChat.startWorkflow') }}</button>
             </div>
           </div>
+        </div>
+        <div v-if="workflowStartHint" class="form-start-bar">
+          <span>{{ workflowStartHint }}</span>
+          <button v-if="canStartWorkflow" class="btn-start" @click="startWorkflow">{{ $t('agentChat.startWorkflow') }}</button>
         </div>
         <div v-if="userInputTypeWarning" class="type-warning">{{ userInputTypeWarning }}</div>
         <div v-if="workflowLoadError" class="workflow-error-panel">
@@ -121,7 +124,7 @@
         <ChatMessage v-for="(msg, index) in visibleMessages" :key="msg._origIndex != null ? msg._origIndex : index" :msg="msg" :process-collapsed="processCollapsed" @copy="copyMessage(msg, msg._origIndex != null ? msg._origIndex : index)" @edit="(newText) => editMessage(msg, msg._origIndex != null ? msg._origIndex : index, newText)" @feedback="(type) => feedbackMessage(msg, msg._origIndex != null ? msg._origIndex : index, type)" @toggle-reasoning="toggleReasoning(msg._origIndex != null ? msg._origIndex : index)" @approve="(action) => handleApproval(msg, msg._origIndex != null ? msg._origIndex : index, action)" @toggle-process-view="processCollapsed = !processCollapsed" />
         <StreamingMessage v-if="isStreaming || isCompressingContext" :streamingContent="streamingContent" :reasoningContent="reasoningContent" :thinkingStatus="thinkingStatus" :nodeSteps="nodeSteps" :todoItems="todoItems" :process-collapsed="processCollapsed" @toggle-process-view="processCollapsed = !processCollapsed" />
       </div>
-      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :attachedFiles="attachedFiles" :inputError="inputError" @send="sendMessage" @attach="$refs.fileInput && $refs.fileInput.click()" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
+      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
       <input ref="fileInput" type="file" multiple style="display:none" @change="handleFileSelect" />
     </div>
     <div v-if="!isPublicMode" class="info-panel" :class="{ collapsed: infoPanelCollapsed }" :style="infoPanelCollapsed ? {} : { width: infoPanelWidth + 'px' }">
@@ -252,6 +255,7 @@ import {
   publicWorkflowsApi,
   tasksApi,
   executionApi,
+  buildWorkflowRunInputs,
   getAdminAuthHeaders,
   handleAdminFetchAuthError,
 } from '../api'
@@ -268,11 +272,32 @@ import {
 import { logger } from '../utils/logger'
 import { isConversationModel } from '../utils/models'
 import { agentRunManager } from '../utils/agentRunManager'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 function getRouteConversationId(vm) {
   const raw = vm?.$route?.query?.conversation_id
   const value = Array.isArray(raw) ? raw[0] : raw
   return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+function getRouteSeedInput(vm) {
+  const raw = vm?.$route?.query?.seed_input
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+function withoutSeedInput(query = {}) {
+  const nextQuery = { ...(query || {}) }
+  delete nextQuery.seed_input
+  return nextQuery
+}
+
+function consumeRouteSeedInput(vm) {
+  const seedInput = getRouteSeedInput(vm)
+  if (seedInput && vm?.$router && vm?.$route) {
+    vm.$router.replace({ query: withoutSeedInput(vm.$route.query) })
+  }
+  return seedInput
 }
 
 function makeLocalConversation(vm, conversationId, messages = []) {
@@ -296,10 +321,16 @@ function ensureLocalConversation(vm, conversationId, messages = []) {
   return conv
 }
 
+function withWorkflowWelcome(vm, messages = []) {
+  const normalized = Array.isArray(messages) ? messages : []
+  if (normalized.length > 0 || !vm?.workflowWelcome) return normalized
+  return [{ role: 'welcome', content: vm.workflowWelcome }]
+}
+
 function syncRouteConversationId(vm, conversationId) {
   if (!conversationId || !vm?.$router || !vm?.$route) return
   if (vm.$route.query?.conversation_id !== conversationId) {
-    vm.$router.replace({ query: { ...vm.$route.query, conversation_id: conversationId } })
+    vm.$router.replace({ query: { ...withoutSeedInput(vm.$route.query), conversation_id: conversationId } })
   }
 }
 
@@ -327,6 +358,8 @@ const RUN_SNAPSHOT_FIELDS = [
   'currentCompletionTokens',
   'currentContextTokens',
   'approvalMode',
+  'humanInputModes',
+  'humanWaitingFor',
   'confirmDialog',
   'confirmQueue',
   'processCollapsed',
@@ -433,10 +466,13 @@ export default {
       isCompressingContext: false,
       showAllMessages: false,
       approvalMode: false,
+      humanInputModes: null,
+      humanWaitingFor: '',
       toolConfirmationLevel: 'off',
       processCollapsed: true,
       runUnsubscribe: null,
       activeRunKey: '',
+      lastStreamingDraftPersistAt: 0,
     }
   },
   computed: {
@@ -469,7 +505,7 @@ export default {
     inputEnabled() {
       if (this.workflowLoadError) return false
       if (this.isInitializing || !this.conversationId) return false
-      if (!this.userInputFieldName) return false
+      if (!this.userInputFieldName && !(this.workflowStatus === 'interrupted' && this.humanWaitingFor)) return false
       return ['idle', 'interrupted', 'finished', 'cancelled'].includes(this.workflowStatus)
     },
     canManualCompressContext() {
@@ -479,14 +515,25 @@ export default {
     canSend() { return this.inputEnabled && this.inputText.trim() && !this.inputError },
     canStartWorkflow() {
       if (this.workflowLoadError) return false
-      if (this.isInitializing || !this.conversationId) return false
+      if (this.isInitializing) return false
       if (this.userInputFieldName) return false
       return this.workflowStatus === 'idle' || this.workflowStatus === 'finished'
+    },
+    workflowStartHint() {
+      const hasVisibleFormFields = (this.formFields || []).length > 0
+      if (this.userInputFieldName || this.workflowLoadError) return ''
+      if (this.isInitializing) return this.$t('common.loading')
+      if (this.workflowStatus === 'running') return this.$t('agentChat.workflowRunning')
+      if (hasVisibleFormFields && this.canStartWorkflow) return this.$t('agentChat.formOnlyWorkflowHint')
+      return ''
     },
     inputPlaceholder() {
       if (this.workflowLoadError) return this.$t('agentChat.workflowUnavailable')
       if (this.isInitializing) return this.$t('common.loading')
-      if (!this.userInputFieldName) return this.$t('agentChat.noUserInput')
+      if (!this.userInputFieldName) {
+        const hasVisibleFormFields = (this.formFields || []).length > 0
+        return hasVisibleFormFields ? this.$t('agentChat.formOnlyInputPlaceholder') : this.$t('agentChat.noUserInput')
+      }
       if (this.workflowStatus === 'running') return this.$t('agentChat.workflowRunning')
       if (this.workflowStatus === 'interrupted') {
         return this.approvalMode ? this.$t('agentChat.approvalFeedbackOptional') : this.$t('agentChat.continueInput')
@@ -561,11 +608,12 @@ export default {
     dynamicVisibleCount() {
       // 根据消息内容长度动态计算显示条数
       // 从最新消息往前累加字符数，超过预算则停止
+      const messages = this.getRenderableMessages()
       const charBudget = 3000
       let total = 0
       let count = 0
-      for (let i = this.messages.length - 1; i >= 0; i--) {
-        const len = (this.messages[i].content || '').length
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const len = (messages[i].content || '').length
         total += len
         count++
         if (count >= 2 && total > charBudget) break
@@ -573,12 +621,13 @@ export default {
       return Math.max(count, 2)
     },
     visibleMessages() {
+      const messages = this.getRenderableMessages()
       const n = this.dynamicVisibleCount
-      if (this.showAllMessages || this.messages.length <= n) return this.messages
-      return this.messages.slice(-n).map((msg, i) => ({ ...msg, _origIndex: this.messages.length - n + i }))
+      if (this.showAllMessages || messages.length <= n) return messages
+      return messages.slice(-n).map((msg, i) => ({ ...msg, _origIndex: messages.length - n + i }))
     },
     hiddenCount() {
-      return this.messages.length - this.dynamicVisibleCount
+      return this.getRenderableMessages().length - this.dynamicVisibleCount
     },
     hasHiddenMessages() {
       return !this.showAllMessages && this.hiddenCount > 0
@@ -611,6 +660,7 @@ export default {
       }
       await Promise.all(tasks)
       const convId = this.$route.query.conversation_id
+      const seedInput = consumeRouteSeedInput(this)
       const hasKnownPublicConversation = this.conversations.some(c => c.id === convId)
       if (this.workflowLoadError) {
         this.conversationId = ''
@@ -618,8 +668,13 @@ export default {
         await this.loadConversation(convId)
       } else if (convId && this.isPublicMode) {
         await this.newConversation()
+      } else if (seedInput) {
+        await this.newConversation()
       } else if (this.conversations.length > 0) await this.loadConversation(this.conversations[0].id)
       else await this.newConversation()
+      if (seedInput && !this.inputText && this.userInputFieldName) {
+        this.inputText = seedInput
+      }
     } finally {
       this.isInitializing = false
       if (this.conversationId) this.attachActiveRun(this.conversationId)
@@ -660,6 +715,17 @@ export default {
         ? this.$t('agentChat.approvalMessageRejected')
         : this.$t('agentChat.approvalMessageRejectedWithReason', { reason: userMessage })
     },
+    applyHumanInterruptInfo(info) {
+      const interruptInfo = info || {}
+      const waitingFor = interruptInfo.waiting_for || this.userInputFieldName || ''
+      this.approvalMode = !!interruptInfo.approval_mode
+      this.humanWaitingFor = waitingFor
+      this.humanInputModes = Array.isArray(interruptInfo.input_modes)
+        ? interruptInfo.input_modes.map(mode => (
+          mode && mode.type === 'button' ? { ...mode, field: waitingFor } : mode
+        ))
+        : null
+    },
     onInfoPanelResizeDown(e) {
       e.preventDefault()
       const startX = e.clientX
@@ -687,9 +753,11 @@ export default {
       try {
         this.workflowLoadError = ''
         this.publicSessionReady = false
-        const data = this.isPublicMode
-          ? await publicWorkflowsApi.get(this.currentWorkflowId, this.shareToken)
-          : await workflowsApi.get(this.currentWorkflowId)
+        const data = await withReadinessRetry(
+          () => this.isPublicMode
+            ? publicWorkflowsApi.get(this.currentWorkflowId, this.shareToken)
+            : workflowsApi.get(this.currentWorkflowId),
+        )
         const workflow = localizeBuiltinWorkflow(data.workflow, this.$t.bind(this))
         this.workflowName = workflow.name
         this.workflowDesc = workflow.description
@@ -802,7 +870,7 @@ export default {
       }
       this.toolConfigLoading = true
       try {
-        const data = await workflowsApi.getToolConfig(this.currentWorkflowId)
+        const data = await withReadinessRetry(() => workflowsApi.getToolConfig(this.currentWorkflowId))
         this.availableSkills = data.skills || []
         this.toolGroups = data.tool_groups || []
         this.toolConfigWarnings = data.warnings || []
@@ -935,8 +1003,18 @@ export default {
         const apiConvs = res.conversations || []
         const merged = []
         for (const conv of [...apiConvs, ...localConvs]) {
-          if (!conv?.id || merged.some(item => item.id === conv.id)) continue
-          merged.push(conv)
+          if (!conv?.id) continue
+          const existingIndex = merged.findIndex(item => item.id === conv.id)
+          if (existingIndex < 0) {
+            merged.push(conv)
+            continue
+          }
+          const existing = merged[existingIndex]
+          const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
+          const incomingMessages = Array.isArray(conv.messages) ? conv.messages : []
+          if (incomingMessages.length > existingMessages.length) {
+            merged[existingIndex] = conv
+          }
         }
         merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
         this.conversations = merged
@@ -980,8 +1058,17 @@ export default {
       this.workflowStatus = 'idle'
       this.streamEndedByWorkflowEvent = false
       this.currentTaskId = null
+      this.lastStreamingDraftPersistAt = 0
+      this.approvalMode = false
+      this.humanInputModes = null
+      this.humanWaitingFor = ''
       this.confirmDialog = { visible: false, submitting: false, confirmId: '', action: '', description: '', requireSudo: false, sudoPassword: '' }
       this.confirmQueue = []
+    },
+    getRenderableMessages(messages = this.messages) {
+      const source = Array.isArray(messages) ? messages : []
+      if (!this.isStreaming) return source
+      return source.filter(msg => !(msg?.role === 'assistant' && msg.streamingDraft))
     },
     getRunKey(conversationId = this.conversationId) {
       return getManagedRunKey(this, conversationId)
@@ -1004,6 +1091,8 @@ export default {
         currentCompletionTokens: this.currentCompletionTokens,
         currentContextTokens: this.currentContextTokens,
         approvalMode: this.approvalMode,
+        humanInputModes: this.humanInputModes,
+        humanWaitingFor: this.humanWaitingFor,
         confirmDialog: this.confirmDialog,
         confirmQueue: this.confirmQueue,
         processCollapsed: this.processCollapsed,
@@ -1050,7 +1139,7 @@ export default {
     generateId() { return 'conv_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9) },
     navigateToConversation(convId) {
       if (!convId) return
-      this.$router.replace({ query: { ...this.$route.query, conversation_id: convId } })
+      this.$router.replace({ query: { ...withoutSeedInput(this.$route.query), conversation_id: convId } })
     },
     async createConversationShell() {
       const source = this.isPublicMode ? 'public' : 'admin'
@@ -1082,10 +1171,20 @@ export default {
         this.navigateToConversation(conv.id)
         return
       }
-      this.messages = []; this.attachedFiles = []; this.resetConversationRuntimeState()
-      if (this.workflowWelcome) this.messages.push({ role: 'welcome', content: this.workflowWelcome })
+      this.messages = withWorkflowWelcome(this, [])
+      this.attachedFiles = []
+      this.resetConversationRuntimeState()
       const conv = await this.createConversationShell()
       this.conversationId = conv.id
+      conv.messages = this.messages
+      conv.updated_at = Date.now()
+      this.saveConversationsToLocal()
+      if (this.messages.length > 0) {
+        const title = conv.title || this.$t('agentChat.newConversation')
+        try {
+          await this.convApi.update(this.currentWorkflowId, conv.id, { title, messages: this.messages }, this.shareToken)
+        } catch (error) {}
+      }
       this.navigateToConversation(conv.id)
     },
     clearCurrentConversation() {
@@ -1094,8 +1193,8 @@ export default {
     },
     confirmClearCurrentConversation() {
       this.clearConversationDialog.visible = false
-      this.messages = []; this.resetConversationRuntimeState()
-      if (this.workflowWelcome) this.messages.push({ role: 'welcome', content: this.workflowWelcome })
+      this.messages = withWorkflowWelcome(this, [])
+      this.resetConversationRuntimeState()
     },
     async loadConversation(convId) {
       if (this.isStreaming) {
@@ -1111,7 +1210,7 @@ export default {
       const applyConversation = (conv) => {
         if (loadSeq !== this.conversationLoadSeq || this.isStreaming) return false
         this.conversationId = conv.id
-        this.messages = this.normalizeAssistantMessages(conv.messages || [])
+        this.messages = this.normalizeAssistantMessages(withWorkflowWelcome(this, conv.messages || []))
         this.nodeSteps = []
         this.loadFeedbackFromDb()
         this.scrollToBottom(true)
@@ -1174,6 +1273,65 @@ export default {
       this.saveConversationsToLocal()
       try { await this.convApi.update(this.currentWorkflowId, this.conversationId, { title, messages: this.messages }, this.shareToken) } catch (e) {}
     },
+    buildStreamingAssistantMessage({ draft = true } = {}) {
+      const hasNodeSteps = this.nodeSteps.length > 0
+      const fallbackText = this.workflowStatus === 'cancelled' ? this.$t('agentChat.interrupted') : this.$t('agentChat.noTextReply')
+      const guardMeta = this.extractPostEditGuardMeta(this.streamingContent || fallbackText)
+      const pendingHumanInput = this.workflowStatus === 'interrupted' && !!this.humanWaitingFor
+      const message = {
+        role: 'assistant', content: guardMeta.content, deliveryStatus: guardMeta.status,
+        deliveryReason: guardMeta.reason, deliveryNextStep: guardMeta.nextStep,
+        reasoning: this.reasoningContent || null, timestamp: Date.now(),
+        toolCalls: hasNodeSteps ? [] : this.currentToolCalls.map(t => ({ ...t, expanded: false })),
+        nodeSteps: this.nodeSteps.map(s => ({ ...s, expanded: false })),
+        reasoningExpanded: false,
+        prompt_tokens: this.currentPromptTokens || 0, completion_tokens: this.currentCompletionTokens || 0,
+        context_tokens: this.currentContextTokens || 0,
+        pendingApproval: this.approvalMode && this.workflowStatus === 'interrupted' ? true : undefined,
+        pendingHumanInput: pendingHumanInput || undefined,
+        humanWaitingFor: pendingHumanInput ? this.humanWaitingFor : undefined,
+        humanInputModes: pendingHumanInput && Array.isArray(this.humanInputModes) ? this.humanInputModes : undefined,
+      }
+      if (draft) message.streamingDraft = true
+      return message
+    },
+    upsertStreamingAssistantMessage({ draft = true } = {}) {
+      if (!this.streamingContent && this.currentToolCalls.length === 0 && this.nodeSteps.length === 0 && !this.reasoningContent && this.workflowStatus !== 'cancelled') return null
+      const message = this.buildStreamingAssistantMessage({ draft })
+      const lastUserIndex = this.messages.reduce((latest, msg, index) => msg?.role === 'user' ? index : latest, -1)
+      let existingIndex = -1
+      for (let index = this.messages.length - 1; index > lastUserIndex; index--) {
+        const msg = this.messages[index]
+        if (msg?.role === 'assistant' && msg.streamingDraft) {
+          existingIndex = index
+          break
+        }
+      }
+      if (existingIndex >= 0) this.messages.splice(existingIndex, 1, message)
+      else this.messages.push(message)
+      return message
+    },
+    persistStreamingAssistantDraft({ remote = false } = {}) {
+      const message = this.upsertStreamingAssistantMessage({ draft: true })
+      if (!message) return null
+      const conv = this.conversations.find(c => c.id === this.conversationId)
+      if (!conv) return message
+      const firstUserMsg = this.messages.find(m => m.role === 'user')
+      const title = firstUserMsg ? firstUserMsg.content.substring(0, 20) + (firstUserMsg.content.length > 20 ? '...' : '') : this.$t('agentChat.newConversation')
+      conv.messages = this.messages
+      conv.updated_at = Date.now()
+      conv.title = title
+      const now = Date.now()
+      const shouldSaveLocal = remote || now - (this.lastStreamingDraftPersistAt || 0) > 1000
+      if (shouldSaveLocal) {
+        this.saveConversationsToLocal()
+        this.lastStreamingDraftPersistAt = now
+      }
+      if (remote && this.convApi?.update) {
+        this.convApi.update(this.currentWorkflowId, this.conversationId, { title, messages: this.messages }, this.shareToken).catch(() => {})
+      }
+      return message
+    },
     async manualCompressContext() {
       if (!this.canManualCompressContext) return
       this.compressConfirmDialog.visible = true
@@ -1221,15 +1379,21 @@ export default {
       if (!this.inputText.trim() || this.inputError) return
       if (!this.validateFormData()) return
       const userMessage = this.inputText.trim()
+      const resumeField = this.workflowStatus === 'interrupted' && this.humanWaitingFor
+        ? this.humanWaitingFor
+        : null
       this.inputText = ''; this.inputError = ''; this.currentPromptTokens = 0; this.currentCompletionTokens = 0
       this.$nextTick(() => { if (this.$refs.chatInput) this.$refs.chatInput.resetHeight() })
       this.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() })
       this.updateCurrentConversation(); this.scrollToBottom(); this.saveFormCache()
       this.approvalMode = false
+      this.humanInputModes = null
+      this.humanWaitingFor = ''
+      this.lastStreamingDraftPersistAt = 0
       this.isStreaming = true; this.workflowStatus = 'running'; this.streamingContent = ''
       this.currentToolCalls = []; this.nodeSteps = []; this.todoItems = []; this.streamEndedByWorkflowEvent = false
       this.thinkingStatus = { icon: '', text: this.$t('agentChat.thinking') }
-      try { await this.streamRequest(userMessage) }
+      try { await this.streamRequest(userMessage, null, null, resumeField) }
       catch (error) {
         if (error.name === 'AbortError') {
           if (this.streamingContent) {
@@ -1253,21 +1417,31 @@ export default {
       this.submitApproval(action)
     },
     restoreInterruptState() {
-      // 检查最后一条助手消息是否有 pendingApproval，恢复中断状态
+      // 检查最后一条助手消息是否还在等待用户输入，恢复中断状态
       const lastAssistant = [...this.messages].reverse().find(m => m.role === 'assistant')
       if (lastAssistant && lastAssistant.pendingApproval) {
         this.workflowStatus = 'interrupted'
         this.approvalMode = true
+        this.humanWaitingFor = lastAssistant.humanWaitingFor || this.userInputFieldName || ''
+        this.humanInputModes = lastAssistant.humanInputModes || null
+      } else if (lastAssistant && lastAssistant.pendingHumanInput) {
+        this.workflowStatus = 'interrupted'
+        this.approvalMode = false
+        this.humanWaitingFor = lastAssistant.humanWaitingFor || this.userInputFieldName || ''
+        this.humanInputModes = lastAssistant.humanInputModes || null
       } else {
         this.workflowStatus = 'finished'
         this.approvalMode = false
+        this.humanWaitingFor = ''
+        this.humanInputModes = null
       }
     },
     async submitApproval(action) {
       const userMessage = this.inputText.trim() || this.getApprovalDefaultText(action)
-      this.inputText = ''; this.approvalMode = false
+      this.inputText = ''; this.approvalMode = false; this.humanInputModes = null; this.humanWaitingFor = ''
       this.messages.push({ role: 'user', content: this.formatApprovalMessage(action, userMessage), timestamp: Date.now(), isInterruptResponse: true })
       this.updateCurrentConversation(); this.scrollToBottom()
+      this.lastStreamingDraftPersistAt = 0
       this.isStreaming = true; this.workflowStatus = 'running'; this.streamingContent = ''
       this.currentToolCalls = []; this.nodeSteps = []; this.todoItems = []; this.streamEndedByWorkflowEvent = false
       this.thinkingStatus = {
@@ -1286,10 +1460,40 @@ export default {
         this.finishManagedRun()
       }
     },
+    async submitHumanInputAction({ label, value, mode }) {
+      if (this.isStreaming) return
+      if (!this.conversationId && !ensureConversationIdForRun(this)) return
+      const field = mode?.field || this.humanWaitingFor
+      if (!field) return
+      const displayText = label || String(value ?? '')
+      this.inputText = ''
+      this.inputError = ''
+      this.messages.push({ role: 'user', content: displayText, timestamp: Date.now(), isInterruptResponse: true })
+      this.updateCurrentConversation(); this.scrollToBottom()
+      this.approvalMode = false
+      this.humanInputModes = null
+      this.humanWaitingFor = ''
+      this.lastStreamingDraftPersistAt = 0
+      this.isStreaming = true; this.workflowStatus = 'running'; this.streamingContent = ''
+      this.currentToolCalls = []; this.nodeSteps = []; this.todoItems = []; this.streamEndedByWorkflowEvent = false
+      this.thinkingStatus = { icon: '', text: this.$t('agentChat.processingStart') }
+      try { await this.streamRequest(null, null, { field, label: displayText, value }) }
+      catch (error) {
+        if (error.name !== 'AbortError') {
+          this.messages.push({ role: 'assistant', content: this.getRequestFailedMessage(error), timestamp: Date.now() })
+        }
+      } finally {
+        this.isStreaming = false
+        if (this.workflowStatus === 'running') this.workflowStatus = 'finished'
+        this.thinkingStatus = null; this.currentToolCalls = []; this.updateCurrentConversation(); this.scrollToBottom()
+        this.finishManagedRun()
+      }
+    },
     async startWorkflow() {
       if (!this.canStartWorkflow) return
       if (!this.validateFormData()) return
       this.saveFormCache()
+      this.lastStreamingDraftPersistAt = 0
       this.isStreaming = true; this.workflowStatus = 'running'; this.streamingContent = ''
       this.currentToolCalls = []; this.nodeSteps = []; this.todoItems = []; this.streamEndedByWorkflowEvent = false
       this.thinkingStatus = { icon: '', text: this.$t('agentChat.startingWorkflow') }
@@ -1318,13 +1522,17 @@ export default {
       if (taskId) { try { await tasksApi.cancel(taskId, '用户中止') } catch (e) {} }
       this.publishRunSnapshot?.()
     },
-    async streamRequest(userInput, humanAction) {
+    async streamRequest(userInput, humanAction, humanInputAction = null, resumeField = null) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
       this.abortController = new AbortController()
       const conversationId = ensureConversationIdForRun(this)
       this.beginManagedRun?.()
-      const inputs = { ...this.formData }
-      if (userInput && this.userInputFieldName) inputs[this.userInputFieldName] = userInput
+      const inputs = buildWorkflowRunInputs({
+        baseInputs: this.formData,
+        userInput,
+        inputField: resumeField || this.userInputFieldName,
+        humanInput: humanInputAction,
+      })
       if (humanAction) inputs.__human_action__ = humanAction
       if (!this.isPublicMode && this.selectedModel) inputs.model = this.selectedModel
       if (!this.isPublicMode && this.isBuiltin && !this.preFilterEnabled) inputs.__skip_filter__ = true
@@ -1385,27 +1593,13 @@ export default {
         this.markRunningStepsFailed(err); this.appendStreamError(err); this.workflowStatus = 'finished'
       }
       if (this.streamingContent || this.currentToolCalls.length > 0 || this.nodeSteps.length > 0 || this.reasoningContent || this.workflowStatus === 'cancelled') {
-        const hasNodeSteps = this.nodeSteps.length > 0
-        const fallbackText = this.workflowStatus === 'cancelled' ? this.$t('agentChat.interrupted') : this.$t('agentChat.noTextReply')
-        const guardMeta = this.extractPostEditGuardMeta(this.streamingContent || fallbackText)
-
         logger.debug('Saving message with token data:', {
           prompt_tokens: this.currentPromptTokens,
           completion_tokens: this.currentCompletionTokens,
           context_tokens: this.currentContextTokens
         })
 
-        this.messages.push({
-          role: 'assistant', content: guardMeta.content, deliveryStatus: guardMeta.status,
-          deliveryReason: guardMeta.reason, deliveryNextStep: guardMeta.nextStep,
-          reasoning: this.reasoningContent || null, timestamp: Date.now(),
-          toolCalls: hasNodeSteps ? [] : this.currentToolCalls.map(t => ({ ...t, expanded: false })),
-          nodeSteps: this.nodeSteps.map(s => ({ ...s, expanded: false })),
-          reasoningExpanded: false,
-          prompt_tokens: this.currentPromptTokens || 0, completion_tokens: this.currentCompletionTokens || 0,
-          context_tokens: this.currentContextTokens || 0,
-          pendingApproval: this.approvalMode && this.workflowStatus === 'interrupted' ? true : undefined,
-        })
+        this.upsertStreamingAssistantMessage({ draft: false })
 
         logger.info('Message saved:', this.messages[this.messages.length - 1])
 
@@ -1439,6 +1633,7 @@ export default {
           this.thinkingStatus = null
           if (eventData.answer) { this.streamingContent += eventData.answer; this.scrollToBottom() }
           else if (eventData.content) { this.streamingContent += eventData.content; this.scrollToBottom() }
+          this.persistStreamingAssistantDraft?.()
           break
         case 'reasoning': {
           this.ensureProcessVisibleForFirstRun()
@@ -1459,11 +1654,13 @@ export default {
             }
           }
           this.scrollToBottom()
+          this.persistStreamingAssistantDraft?.()
           break
         }
         case 'workflow_started':
           this.thinkingStatus = { icon: '', text: this.$t('agentChat.processingStart') }; this.reasoningContent = ''
           if (this.nodeSteps.length === 0) this.nodeSteps = []
+          this.persistStreamingAssistantDraft?.()
           break
         case 'node_started': {
           this.ensureProcessVisibleForFirstRun()
@@ -1475,7 +1672,7 @@ export default {
           else if (nodeType.toLowerCase().includes('tool') || nodeType.toLowerCase().includes('mcp')) this.thinkingStatus = { icon: '', text: this.$t('agentChat.toolCallingGeneric') }
           else if (nodeType.toLowerCase().includes('human')) this.thinkingStatus = { icon: '', text: this.$t('agentChat.awaitingInput') }
           else this.thinkingStatus = { icon: '', text: this.$t('agentChat.executingNode', { nodeId }) }
-          this.scrollToBottom(); break
+          this.scrollToBottom(); this.persistStreamingAssistantDraft?.(); break
         }
         case 'node_finished': {
           const finishedNodeId = eventData.node_id || eventData.node || event.node_id || event.node
@@ -1489,6 +1686,7 @@ export default {
           }
           // 只有当没有任何 running 节点时才清除 thinkingStatus（并行节点场景）
           if (!this.nodeSteps.some(s => s.status === 'running')) this.thinkingStatus = null
+          this.persistStreamingAssistantDraft?.()
           break
         }
         case 'tool_start': {
@@ -1503,7 +1701,7 @@ export default {
             runningStep.toolCalls.push(startToolCall)
             if (runningStep.segments) runningStep.segments.push({ type: 'tool', ...startToolCall })
           }
-          this.currentToolCalls.push(startToolCall); this.scrollToBottom(); break
+          this.currentToolCalls.push(startToolCall); this.scrollToBottom(); this.persistStreamingAssistantDraft?.(); break
         }
         case 'tool': {
           const toolStatusMeta = this.resolveToolCallStatus({ status: eventData.status || event.status, result: event.tool_result })
@@ -1525,7 +1723,7 @@ export default {
           const existIdx = this.currentToolCalls.findIndex(t => t.id === toolCall.id)
           if (existIdx >= 0) this.currentToolCalls[existIdx] = toolCall
           else this.currentToolCalls.push(toolCall)
-          this.scrollToBottom(); break
+          this.scrollToBottom(); this.persistStreamingAssistantDraft?.(); break
         }
         case 'harness_feedback': {
           this.ensureProcessVisibleForFirstRun()
@@ -1542,6 +1740,7 @@ export default {
           }
           this.thinkingStatus = null
           this.scrollToBottom()
+          this.persistStreamingAssistantDraft?.()
           break
         }
         case 'message_end':
@@ -1563,25 +1762,31 @@ export default {
           if (eventData.metadata?.context_tokens !== undefined) {
             this.currentContextTokens = eventData.metadata.context_tokens
           }
+          this.persistStreamingAssistantDraft?.()
           break
         case 'workflow_finished':
           this.streamEndedByWorkflowEvent = true; this.thinkingStatus = null; this.currentTaskId = null
           if (eventData.status === 'cancelled' || eventData.outputs?.cancelled) this.workflowStatus = 'cancelled'
           else if (eventData.status === 'interrupted' || eventData.outputs?.interrupted) {
             this.workflowStatus = 'interrupted'
-            this.approvalMode = !!(eventData.outputs?.interrupt_info?.approval_mode)
+            this.applyHumanInterruptInfo(eventData.outputs?.interrupt_info)
           }
           else if (eventData.status === 'failed') {
             this.markRunningStepsFailed(eventData.error || this.$t('agentChat.workflowFailed'))
             this.appendStreamError(eventData.error || this.$t('agentChat.workflowFailed'))
             this.workflowStatus = 'finished'
           }
-          else this.workflowStatus = 'finished'
+          else {
+            this.workflowStatus = 'finished'
+            if (eventData.outputs?.next_input_info) this.applyHumanInterruptInfo(eventData.outputs.next_input_info)
+          }
           if (eventData.outputs?.answer && !this.streamingContent) this.streamingContent = eventData.outputs.answer
+          this.persistStreamingAssistantDraft?.({ remote: true })
           break
         case 'interrupted':
           this.thinkingStatus = { icon: '', text: this.$t('agentChat.awaitingInput') }; this.workflowStatus = 'interrupted'
-          this.approvalMode = !!(event.data?.approval_mode || event.approval_mode)
+          this.applyHumanInterruptInfo(event.data || event)
+          this.persistStreamingAssistantDraft?.({ remote: true })
           break
         case 'model_retry': {
           const attempt = eventData.attempt || event.attempt || 1
@@ -2012,8 +2217,10 @@ export default {
 .file-uploaded .file-remove:hover { color: var(--error); }
 .files-upload-field { display: flex; flex-direction: column; gap: 6px; }
 .files-list { display: flex; flex-direction: column; gap: 4px; }
-.btn-start { padding: 10px 20px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-.btn-start:hover { background: var(--primary-hover); }
+.btn-start { padding: 10px 20px; background: var(--primary-color, #18181b); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+.btn-start:hover { background: var(--primary-hover, #000000); }
+.form-start-bar { width: 100%; max-width: 880px; margin: -8px auto 16px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-sec); font-size: 13px; line-height: 1.6; }
+.form-start-bar .btn-start { flex-shrink: 0; }
 
 .type-warning { text-align: center; padding: 8px; font-size: 12px; color: #f59e0b; background: #fffbeb; border-radius: 6px; margin: 0 24px 8px; }
 

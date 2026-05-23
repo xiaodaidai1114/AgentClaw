@@ -8,6 +8,7 @@ AgentClaw Graph 模块
 """
 
 from agentclaw.graph.workflow import Workflow
+from agentclaw.graph.template import WorkflowTemplate
 from agentclaw.graph.context import (
     WorkflowContext,
     CancelToken,
@@ -16,6 +17,7 @@ from agentclaw.graph.context import (
 
 __all__ = [
     "Workflow",
+    "WorkflowTemplate",
     "WorkflowContext",
     "CancelToken",
     "StreamCallback",

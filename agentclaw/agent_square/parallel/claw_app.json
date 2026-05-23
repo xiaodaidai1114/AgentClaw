@@ -1,0 +1,18 @@
+{
+  "id": "parallel",
+  "name": "05 Parallel Analysis",
+  "description": "Fan-out/Fan-in 并行执行示例：同时分析情感、关键词、摘要并合并报告。",
+  "tags": [
+    "示例",
+    "并行",
+    "Fan-out",
+    "分析"
+  ],
+  "entry": "agents/parallel.py",
+  "workflow_id": "parallel",
+  "recommended_input": "AgentClaw 让构建生产可用的智能体更简单，支持状态管理、流式输出和工具集成。",
+  "category": "example",
+  "workflow": "agents/parallel.py",
+  "copyable": true,
+  "inspectable": true
+}

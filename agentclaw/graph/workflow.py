@@ -45,6 +45,7 @@ logger = get_logger(__name__)
 # 全局 MCPToolKit 缓存：同一 mcp.json 路径只创建一个 MCPToolKit 实例
 # 避免多个 Workflow 对同一配置文件分别创建 MCPToolKit 导致重复启动 MCP Server 子进程
 _mcp_toolkit_cache: dict = {}  # resolved_path_str -> MCPToolKit
+LANGGRAPH_UNLIMITED_RECURSION_LIMIT = 1_000_000
 
 
 def _get_mcp_connect_timeout() -> float:
@@ -116,7 +117,7 @@ class Workflow:
         description: str = "",
         desc: str = "",  # MCP 工具描述（发布为 MCP Server 时使用）
         timeout: int = 300,
-        recursion_limit: int = 50,
+        recursion_limit: int = 0,
         cancel_on_disconnect: bool = True,
         inputs: Optional[Any] = None,  # 输入参数定义
         user_input: Optional[str] = None,  # 指定哪个输入字段是用户输入（从对话框传入）
@@ -146,7 +147,7 @@ class Workflow:
         self._skills_dir = skills_dir  # Skills 目录路径
         
         self.timeout = timeout
-        self.recursion_limit = recursion_limit
+        self.recursion_limit = recursion_limit if recursion_limit and recursion_limit > 0 else 0
         self.cancel_on_disconnect = cancel_on_disconnect
         
         self.auth_required = auth_required
@@ -203,15 +204,11 @@ class Workflow:
 
     @staticmethod
     def _is_framework_internal_file(path: Path) -> bool:
-        """判断路径是否位于 agentclaw 框架包内部（examples/ 除外）。"""
+        """判断路径是否位于 agentclaw 框架包内部。"""
         try:
             resolved = path.resolve()
             framework_root = Path(__file__).resolve().parents[1]  # agentclaw/
             if not resolved.is_relative_to(framework_root):
-                return False
-            # examples/ 目录视为用户代码，不是框架内部
-            examples_dir = (framework_root / "examples").resolve()
-            if resolved.is_relative_to(examples_dir):
                 return False
             return True
         except Exception:
@@ -253,7 +250,8 @@ class Workflow:
         配置自动发现的候选目录（按优先级）：
         1) 工作流文件同级目录的父目录（典型：<project>/workflows/*.py -> <project>）
         2) 工作流文件同级目录
-        3) 当前工作目录
+        3) 全局运行项目目录（支持导入到 agents/<app>/agents/*.py 的模板工作流）
+        4) 当前工作目录
         """
         candidates: List[Path] = []
 
@@ -261,6 +259,21 @@ class Workflow:
             wf_dir = self._definition_file.parent
             candidates.append(wf_dir.parent)
             candidates.append(wf_dir)
+
+        try:
+            from agentclaw.config import get_config
+
+            project = get_config().project
+            for raw_path in (
+                getattr(project, "project_dir", None),
+                getattr(project, "models_config", None).parent if getattr(project, "models_config", None) else None,
+                getattr(project, "mcp_config", None).parent if getattr(project, "mcp_config", None) else None,
+                getattr(project, "skills_dir", None).parent if getattr(project, "skills_dir", None) else None,
+            ):
+                if raw_path:
+                    candidates.append(Path(raw_path))
+        except Exception as exc:
+            logger.debug(f"读取全局项目配置失败，跳过运行项目目录候选: {exc}")
 
         candidates.append(Path.cwd().resolve())
 
@@ -656,28 +669,66 @@ class Workflow:
                 if new is None:
                     return existing
                 return new
+
+            def _shallow_merge_value(existing, new):
+                """Reducer: shallow merge dict patches from parallel branches."""
+                if new is None:
+                    return existing
+                if isinstance(existing, dict) and isinstance(new, dict):
+                    return {**existing, **new}
+                return new
+
+            def _deep_merge_value(existing, new):
+                """Reducer: deep merge dict patches from parallel branches."""
+                if new is None:
+                    return existing
+                if isinstance(existing, dict) and isinstance(new, dict):
+                    from agentclaw.graph.state_path import merge_path
+                    merged = {"value": existing}
+                    merge_path(merged, "value", new, strategy="deep_merge")
+                    return merged["value"]
+                return new
+
+            merge_reducers = {
+                "replace": _last_value,
+                "shallow_merge": _shallow_merge_value,
+                "deep_merge": _deep_merge_value,
+            }
+
+            field_merge_strategies = {}
+            for node_id in self._node_order:
+                node = self._nodes[node_id]
+                if hasattr(node, "get_state_merge_strategies"):
+                    try:
+                        field_merge_strategies.update(node.get_state_merge_strategies())  # type: ignore[attr-defined]
+                    except Exception as e:
+                        logger.debug(f"读取节点 {node_id} 状态合并策略失败: {e}")
+
+            def _field_reducer(field_name: str):
+                strategy = field_merge_strategies.get(field_name, "replace")
+                return merge_reducers.get(strategy, _last_value)
             
             # 收集所有可能的状态字段（从 _state_schema + 节点 output_key + inputs）
             all_fields = {}
             for key in self._state_schema:
-                all_fields[key] = Annotated[Any, _last_value]
+                all_fields[key] = Annotated[Any, _field_reducer(key)]
             
             # 添加节点的 output_key
             for node_id in self._node_order:
                 node = self._nodes[node_id]
                 output_key = getattr(node, 'output_key', None) or node.id
                 if output_key not in all_fields:
-                    all_fields[output_key] = Annotated[Any, _last_value]
+                    all_fields[output_key] = Annotated[Any, _field_reducer(output_key)]
                 # HumanNode 的 feedback_field 也需要写入 state
                 feedback_field = getattr(node, 'feedback_field', None)
                 if feedback_field and feedback_field not in all_fields:
-                    all_fields[feedback_field] = Annotated[Any, _last_value]
+                    all_fields[feedback_field] = Annotated[Any, _field_reducer(feedback_field)]
             
             # 添加 inputs 定义的字段
             if self._input_schema:
                 for key in self._input_schema.inputs:
                     if key not in all_fields:
-                        all_fields[key] = Annotated[Any, _last_value]
+                        all_fields[key] = Annotated[Any, _field_reducer(key)]
             
             # 添加常见的内部字段
             for internal_key in ['thread_id', 'user_id', '__messages__', '__status__', '__interrupted__', '__files__',
@@ -692,7 +743,7 @@ class Workflow:
                 _n = self._nodes[node_id]
                 for _fk in (getattr(_n, 'tools_filter_key', None), getattr(_n, 'skills_filter_key', None)):
                     if _fk and _fk not in all_fields:
-                        all_fields[_fk] = Annotated[Any, _last_value]
+                        all_fields[_fk] = Annotated[Any, _field_reducer(_fk)]
             
             # 动态创建 TypedDict
             from typing import TypedDict
@@ -751,6 +802,15 @@ class Workflow:
             import traceback
             traceback.print_exc()
             return None
+
+    def _build_langgraph_config(self, thread_id: str) -> dict:
+        """Build LangGraph runtime config from AgentClaw workflow settings."""
+
+        limit = int(self.recursion_limit or 0)
+        return {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": limit if limit > 0 else LANGGRAPH_UNLIMITED_RECURSION_LIMIT,
+        }
     
     def _wrap_node_for_langgraph(self, node):
         """将 agentclaw 节点包装为 LangGraph 节点函数"""
@@ -921,9 +981,16 @@ class Workflow:
         self._nodes[node.id] = node
         self._node_order.append(node.id)
         
-        output_key = getattr(node, 'output_key', None) or node.id
-        if output_key not in self._state_schema:
-            self._state_schema[output_key] = str
+        output_keys = [getattr(node, 'output_key', None) or node.id]
+        if hasattr(node, "get_state_output_keys"):
+            try:
+                output_keys = list(node.get_state_output_keys())  # type: ignore[attr-defined]
+            except Exception as e:
+                logger.debug(f"读取节点 {node.id} 状态输出字段失败: {e}")
+
+        for output_key in output_keys:
+            if output_key and output_key not in self._state_schema:
+                self._state_schema[output_key] = str
         
         self._compiled_graph = None
         logger.debug(f"添加节点: {node.id}")
@@ -1746,11 +1813,8 @@ class Workflow:
     ) -> dict:
         """使用 LangGraph 编译图执行（支持 checkpointer 自动持久化）"""
         logger.info(f"使用 LangGraph 执行工作流: {self.id}, thread_id: {thread_id}")
-        
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": self.recursion_limit,
-        }
+
+        config = self._build_langgraph_config(thread_id)
         
         from langgraph.errors import GraphInterrupt
         from langgraph.types import Command
@@ -1791,21 +1855,14 @@ class Workflow:
         
         # 检查是否是恢复调用（已有状态快照且有用户输入）
         # 优先使用 workflow 配置的 user_input 字段；缺失时回退到 __user__
-        user_input = None
-        if user_input_field:
-            user_input = inputs.get(user_input_field)
-        if user_input is None:
-            user_input = inputs.get("__user__")
-
-        if user_input is not None and not isinstance(user_input, str):
-            user_input = str(user_input)
+        user_input = self._build_human_resume_value(inputs or {}, user_input_field)
 
         snapshot = await compiled_graph.aget_state(config)
 
         # --- 检测残留挂起状态（取消/超时导致的非正常挂起） ---
         # 正常中断（如 HumanNode 审批）在 snapshot.tasks 中有 interrupt data，
         # 而取消/超时导致的挂起没有。检测到后清理 checkpoint 并保留对话上下文。
-        if snapshot and snapshot.next and user_input:
+        if snapshot and snapshot.next and user_input is not None:
             has_interrupt_data = any(
                 hasattr(task, 'interrupts') and task.interrupts
                 for task in (snapshot.tasks or ())
@@ -1912,17 +1969,13 @@ class Workflow:
             result_state["__status__"] = "completed"
             return result_state
         
-        if snapshot and snapshot.next and user_input:
+        if snapshot and snapshot.next and user_input is not None:
             # 恢复模式：使用 Command(resume=...)
             logger.info(f"恢复工作流: {self.id}, thread_id: {thread_id}")
 
-            # 构造 resume 值：如果有 __human_action__（审批按钮），传结构化数据。
+            # 构造 resume 值：HumanNode 文本与按钮都通过 feedback_field 恢复。
             # 同步注入本次请求级运行参数，避免恢复中断时沿用旧 checkpoint 中的模型/权限。
-            human_action = inputs.get("__human_action__") if inputs else None
-            if human_action:
-                resume_value = {"__action__": human_action, "text": user_input}
-            else:
-                resume_value = user_input
+            resume_value = user_input
             resume_update = {}
             if runtime_model_id:
                 resume_update["__runtime_model_id__"] = runtime_model_id
@@ -2008,7 +2061,7 @@ class Workflow:
                         break
         except Exception as ex:
             logger.debug(f"snapshot 中断检测失败: {ex}")
-        return result
+        return self._normalize_interrupt_state(result)
 
     def _check_interrupt_marker(self, result: dict) -> dict:
         """
@@ -2030,11 +2083,36 @@ class Workflow:
                 first_interrupt = interrupt_info[0]
                 if hasattr(first_interrupt, 'value'):
                     result["__interrupt_info__"] = first_interrupt.value
-            
             # 移除内部字段，避免序列化问题
             del result["__interrupt__"]
-        
+
+        return self._normalize_interrupt_state(result)
+
+    @staticmethod
+    def _normalize_interrupt_state(result: dict) -> dict:
+        """标准化中断返回字段，方便外层识别嵌套工作流中断。"""
+        interrupt_info = result.get("__interrupt_info__")
+        if not isinstance(interrupt_info, dict):
+            return result
+
+        subworkflow_info = interrupt_info.get("subworkflow")
+        if isinstance(subworkflow_info, dict):
+            result["__subworkflow_interrupt__"] = subworkflow_info
+
         return result
+
+    @staticmethod
+    def _build_human_resume_value(inputs: dict, user_input_field: Optional[str] = None):
+        """从本次请求中提取 HumanNode 恢复值，保留按钮 value 的原始类型。"""
+        if not inputs:
+            return None
+        if "__human_input__" in inputs:
+            return {"__human_input__": inputs.get("__human_input__")}
+        if user_input_field and user_input_field in inputs:
+            return inputs.get(user_input_field)
+        if "__user__" in inputs:
+            return inputs.get("__user__")
+        return None
     
     @asynccontextmanager
     async def _trace_context(self, tracer, thread_id: str, inputs: dict, mode: str):
@@ -2151,7 +2229,7 @@ class Workflow:
             except Exception:
                 pass
 
-        return result_state
+        return self._normalize_interrupt_state(result_state)
     
     def _make_serializable(self, obj):
         """递归清理对象，确保可以 JSON 序列化"""
@@ -2381,8 +2459,12 @@ class Workflow:
                     state["__interrupted__"] = True
                     state["__interrupt_node__"] = current_node
                     state["__status__"] = "waiting_for_input"
+                    if isinstance(node, HumanNode):
+                        state["__interrupt_info__"] = node.build_interrupt_payload(state)
                     return state
-            
+                if not debugger and state.get("__interrupted__"):
+                    return state
+
             if current_node in self._conditional_edges:
                 edge_config = self._conditional_edges[current_node]
                 condition_result = edge_config["condition"](state)
@@ -2392,6 +2474,26 @@ class Workflow:
                 else:
                     next_node = edge_config["targets"].get(condition_result)
                 
+                if isinstance(next_node, list):
+                    parallel_targets = [node_id for node_id in next_node if node_id not in ("__end__", "END", None)]
+                    if not parallel_targets:
+                        break
+                    parallel_results = await self._execute_parallel_nodes(
+                        parallel_targets, state, context, channel, debugger, time_module
+                    )
+                    for i, result in enumerate(parallel_results):
+                        new_keys = {k: v for k, v in result.items() if k.startswith("__") and k not in state}
+                        if new_keys:
+                            logger.info(f"并行节点 {parallel_targets[i]} 新增 state keys: {list(new_keys.keys())}")
+                        state = self._merge_parallel_result(state, result, parallel_targets[i])
+                    channel.state = state
+
+                    common_next = self._find_common_successor(parallel_targets)
+                    if common_next:
+                        current_node = common_next
+                        continue
+                    break
+
                 if next_node in ("__end__", "END", None):
                     break
                 current_node = next_node
@@ -2411,7 +2513,7 @@ class Workflow:
                         new_keys = {k: v for k, v in result.items() if k.startswith("__") and k not in state}
                         if new_keys:
                             logger.info(f"并行节点 {next_nodes[i]} 新增 state keys: {list(new_keys.keys())}")
-                        state.update(result)
+                        state = self._merge_parallel_result(state, result, next_nodes[i])
                     logger.info(f"并行合并完成，state 中 filter keys: "
                                 f"__filtered_tools__={'__filtered_tools__' in state}, "
                                 f"__filtered_skill_names__={'__filtered_skill_names__' in state}")
@@ -2448,8 +2550,8 @@ class Workflow:
         return state
     
     async def _execute_parallel_nodes(
-        self, 
-        node_ids: List[str], 
+        self,
+        node_ids: List[str],
         state: dict, 
         context: "WorkflowContext",
         channel,
@@ -2534,9 +2636,33 @@ class Workflow:
                 raise result
             else:
                 successful_results.append(result)
-        
+
         return successful_results
-    
+
+    def _merge_parallel_result(self, state: dict, result: dict, node_id: str) -> dict:
+        """Merge one parallel branch result back into built-in workflow state."""
+        node = self._nodes.get(node_id)
+        strategies = {}
+        if node and hasattr(node, "get_state_merge_strategies"):
+            try:
+                strategies = node.get_state_merge_strategies()  # type: ignore[attr-defined]
+            except Exception as e:
+                logger.debug(f"读取节点 {node_id} 状态合并策略失败: {e}")
+
+        if not strategies:
+            state.update(result)
+            return state
+
+        from agentclaw.graph.state_path import merge_path
+
+        for key, value in result.items():
+            strategy = strategies.get(key)
+            if strategy in ("deep_merge", "shallow_merge", "append"):
+                merge_path(state, key, value, strategy=strategy)
+            else:
+                state[key] = value
+        return state
+
     def _find_common_successor(self, node_ids: List[str]) -> Optional[str]:
         """
         查找多个节点的共同后继节点
@@ -2932,5 +3058,7 @@ class Workflow:
 
         # 添加是否为内置智能体标识
         result["is_builtin"] = is_builtin_workflow
+        result["agent_square_app_id"] = getattr(self, "agent_square_app_id", "") or ""
+        result["recommended_input"] = getattr(self, "recommended_input", "") or ""
 
         return result

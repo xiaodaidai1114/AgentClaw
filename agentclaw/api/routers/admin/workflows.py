@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import importlib.util
 import re
+import sys
 import traceback
 import uuid
 from fastapi import APIRouter, Query, Depends
@@ -100,7 +101,12 @@ async def register_workflow_from_file(request: RegisterWorkflowFileRequest):
         if spec is None or spec.loader is None:
             raise RuntimeError(f"无法加载模块规格: {target_path}")
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        sys.modules[module_alias] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop(module_alias, None)
+            raise
         return module_alias, mod
 
     loaded_module = None

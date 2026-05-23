@@ -228,6 +228,7 @@ import { knowledgebaseApi, modelsApi } from '../api'
 import { useKnowledgebaseUpload } from '../composables/useKnowledgebaseUpload'
 import { formatDateTime } from '../composables/useFormatters'
 import { useResizableDrawer } from '../composables/useResizableDrawer'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const TEST_RERANK_FOLLOW = '__follow__'
 const TEST_RERANK_DISABLED = '__disabled__'
@@ -371,7 +372,7 @@ function normalizeDocument(item) {
 }
 
 async function fetchKnowledgebase() {
-  const response = await knowledgebaseApi.get(route.params.id)
+  const response = await withReadinessRetry(() => knowledgebaseApi.get(route.params.id))
   knowledgebase.value = response
   const retrieval = response.retrieval_config || {}
   configForm.value = {

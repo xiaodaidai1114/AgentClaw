@@ -127,7 +127,7 @@ class AuthConfig:
 class WorkflowConfig:
     """工作流配置"""
     timeout: int = 300
-    recursion_limit: int = 50
+    recursion_limit: int = 0
     max_tool_rounds: int = 0  # 0 = 不限制
     max_context_messages: int = 0  # 0 = 不限制
     tool_result_max_length: int = 20000
@@ -138,7 +138,7 @@ class WorkflowConfig:
         """从环境变量加载"""
         return cls(
             timeout=int(os.getenv("WORKFLOW_TIMEOUT", "300")),
-            recursion_limit=int(os.getenv("WORKFLOW_RECURSION_LIMIT", "50")),
+            recursion_limit=int(os.getenv("WORKFLOW_RECURSION_LIMIT", "0")),
             max_tool_rounds=int(os.getenv("MAX_TOOL_ROUNDS", "0")),
             max_context_messages=int(os.getenv("MAX_CONTEXT_MESSAGES", "0")),
             tool_result_max_length=int(os.getenv("TOOL_RESULT_MAX_LENGTH", "20000")),

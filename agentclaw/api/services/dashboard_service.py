@@ -144,6 +144,92 @@ class DashboardService:
             "duration_points": trends.get("duration_points", []),
         }
 
+    def _template_app_payload(self, app: dict, *, include_import_status: bool = False) -> dict:
+        payload = {
+            "id": str(app.get("id", "")),
+            "name": str(app.get("name", "")),
+            "description": app.get("description") or "",
+            "category": str(app.get("category", "")),
+            "tags": list(app.get("tags") or []),
+            "workflow_id": str(app.get("workflow_id") or app.get("id", "")),
+            "recommended_input": app.get("recommended_input") or "",
+            "copyable": bool(app.get("copyable", True)),
+            "inspectable": bool(app.get("inspectable", True)),
+            "registered": bool(app.get("registered", False)),
+        }
+        if include_import_status:
+            from agentclaw.agent_square import get_claw_app_import_status
+            from agentclaw.config import get_config
+
+            project_dir = get_config().project.project_dir
+            status = get_claw_app_import_status(payload["id"], project_dir)
+            payload.update(status)
+        return payload
+
+    def list_template_library_apps(self) -> list[dict]:
+        """List packaged Template Library apps without importing workflows."""
+        from agentclaw.agent_square import list_claw_apps
+
+        return [
+            self._template_app_payload(app, include_import_status=True)
+            for app in list_claw_apps()
+        ]
+
+    def list_agent_square_apps(self) -> list[dict]:
+        """Compatibility alias for older Agent Square clients."""
+        from agentclaw.agent_square import list_claw_apps
+
+        apps = []
+        for app in list_claw_apps():
+            apps.append(self._template_app_payload(app))
+        return apps
+
+    async def import_template_library_app(self, app_id: str, *, overwrite: bool = False) -> dict:
+        """Copy a packaged template into the current project and hot-register it."""
+        from agentclaw.agent_square import import_claw_app_to_project, register_project_claw_app_workflow
+        from agentclaw.api.registry import WorkflowRegistry
+        from agentclaw.config import get_config
+
+        config = get_config()
+        project = config.project
+
+        # A registered workflow id is a runtime conflict unless the caller
+        # explicitly asked to replace it.
+        app_preview = None
+        try:
+            from agentclaw.agent_square import get_claw_app
+
+            app_preview = get_claw_app(app_id)
+        except Exception:
+            app_preview = None
+        workflow_id = str((app_preview or {}).get("workflow_id") or (app_preview or {}).get("id") or app_id)
+        if WorkflowRegistry.get(workflow_id) and not overwrite:
+            raise FileExistsError(f"workflow id already registered: {workflow_id}")
+        if WorkflowRegistry.get(workflow_id) and overwrite:
+            WorkflowRegistry.unregister(workflow_id)
+
+        import_result = import_claw_app_to_project(
+            app_id,
+            project.project_dir,
+            overwrite=overwrite,
+        )
+
+        workflow_id = str(import_result["workflow_id"])
+        register_project_claw_app_workflow(import_result, project)
+
+        return {
+            "success": True,
+            "imported": True,
+            "registered": True,
+            "app_id": str((import_result.get("app") or {}).get("id") or app_id),
+            "workflow_id": workflow_id,
+            "target_dir": str(import_result["target_dir"]),
+            "workflow_file": str(import_result["workflow_file"]),
+            "init_path": str(import_result.get("init_path") or ""),
+            "import_added": bool(import_result.get("import_added", False)),
+            "message": "模板已导入为当前项目智能体。",
+        }
+
 
 def get_dashboard_service() -> DashboardService:
     """获取 Dashboard 服务实例"""

@@ -20,6 +20,63 @@ from agentclaw.logger.config import get_logger
 logger = get_logger(__name__)
 
 
+def _strip_json_comments(text: str) -> str:
+    """Remove JSONC-style comments while preserving string contents."""
+    result: list[str] = []
+    i = 0
+    in_string = False
+    escaped = False
+    length = len(text)
+
+    while i < length:
+        char = text[i]
+
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            i += 1
+            continue
+
+        if char == "/" and i + 1 < length:
+            next_char = text[i + 1]
+
+            if next_char == "/":
+                result.extend("  ")
+                i += 2
+                while i < length and text[i] not in "\r\n":
+                    result.append(" ")
+                    i += 1
+                continue
+
+            if next_char == "*":
+                result.extend("  ")
+                i += 2
+                while i < length:
+                    if text[i] == "*" and i + 1 < length and text[i + 1] == "/":
+                        result.extend("  ")
+                        i += 2
+                        break
+                    result.append(text[i] if text[i] in "\r\n" else " ")
+                    i += 1
+                continue
+
+        result.append(char)
+        i += 1
+
+    return "".join(result)
+
+
 class TransportType(str, Enum):
     """MCP 传输类型"""
     STDIO = "stdio"
@@ -74,6 +131,10 @@ class MCPServerConfig:
         """从字典创建配置"""
         # 自动检测传输类型
         transport_value = data.get("transport")
+        legacy_type = str(data.get("type", "")).strip().lower()
+        if transport_value is None and legacy_type == "remote" and "url" in data:
+            transport_value = TransportType.STREAMABLE_HTTP.value
+
         transport_auto = transport_value is None and "url" in data
         transport_str = transport_value or "stdio"
         if transport_auto:
@@ -125,19 +186,22 @@ class MCPServerConfig:
 class MCPConfig:
     """MCP 配置管理"""
     servers: Dict[str, MCPServerConfig] = field(default_factory=dict)
+    source_path: Optional[Path] = None
     
     @classmethod
     def from_file(cls, path: str | Path) -> MCPConfig:
-        """从 JSON 文件加载配置"""
+        """从 JSON/JSONC 文件加载配置"""
         path = Path(path)
         if not path.exists():
             logger.warning(f"MCP 配置文件不存在: {path}")
             return cls()
         
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return cls.from_dict(data)
+            raw = path.read_text(encoding="utf-8")
+            data = json.loads(_strip_json_comments(raw))
+            config = cls.from_dict(data)
+            config.source_path = path
+            return config
         except json.JSONDecodeError as e:
             logger.error(f"MCP 配置文件格式错误: {e}")
             return cls()
@@ -155,6 +219,68 @@ class MCPConfig:
             servers[name] = MCPServerConfig.from_dict(name, server_data)
         
         return cls(servers=servers)
+
+    def record_detected_transport(self, server_name: str, transport: TransportType) -> bool:
+        """Persist a detected HTTP transport for a URL server that omitted transport."""
+        server = self.get_server(server_name)
+        if not server or not server.transport_auto or not self.source_path:
+            return False
+
+        raw = self.source_path.read_text(encoding="utf-8")
+        marker = f'"{server_name}"'
+        marker_index = raw.find(marker)
+        if marker_index < 0:
+            return False
+
+        object_start = raw.find("{", marker_index + len(marker))
+        if object_start < 0:
+            return False
+
+        depth = 0
+        in_string = False
+        escaped = False
+        object_end = -1
+        for index in range(object_start, len(raw)):
+            char = raw[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    object_end = index
+                    break
+
+        if object_end < 0:
+            return False
+
+        body = raw[object_start + 1:object_end]
+        if '"transport"' in body or '"type"' in body:
+            return False
+
+        first_field_index = body.find('"')
+        if first_field_index < 0:
+            return False
+
+        line_start = body.rfind("\n", 0, first_field_index) + 1
+        indent = body[line_start:first_field_index]
+        insertion = f'{indent}"transport": "{transport.value}",\n'
+        insert_at = object_start + 1 + line_start
+        updated = raw[:insert_at] + insertion + raw[insert_at:]
+        self.source_path.write_text(updated, encoding="utf-8")
+
+        server.transport = transport
+        server.transport_auto = False
+        return True
     
     def get_enabled_servers(self) -> List[MCPServerConfig]:
         """获取所有启用的 Server"""

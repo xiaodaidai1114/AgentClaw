@@ -4,7 +4,7 @@ HumanNode - 人工审批节点
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Literal, Optional, TYPE_CHECKING
+from typing import Any, Callable, Literal, Optional, TYPE_CHECKING
 
 from agentclaw.node.base import BaseNode
 from agentclaw.logger.config import get_logger
@@ -13,6 +13,79 @@ if TYPE_CHECKING:
     from agentclaw.graph.context import WorkflowContext
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class HumanInput:
+    """HumanNode 输入模式定义。"""
+
+    type: Literal["text", "button"]
+    label: Optional[str] = None
+    value: Any = None
+    confirm: bool = False
+    placeholder: Optional[str] = None
+
+    @classmethod
+    def text(cls, placeholder: Optional[str] = None) -> "HumanInput":
+        return cls(type="text", placeholder=placeholder)
+
+    @classmethod
+    def button(cls, label: str, value: Any = None, confirm: bool = False) -> "HumanInput":
+        return cls(
+            type="button",
+            label=label,
+            value=label if value is None else value,
+            confirm=confirm,
+        )
+
+
+InputModes = list[HumanInput | dict]
+InputModesProvider = Callable[[dict], InputModes]
+
+
+def normalize_input_modes(input_modes: Optional[InputModes] = None, *, approval_mode: bool = False) -> list[dict]:
+    """规范化 HumanNode 输入模式，供前端渲染。"""
+    if input_modes is None:
+        if approval_mode:
+            input_modes = [
+                HumanInput.text(),
+                HumanInput.button("通过", value="approve"),
+                HumanInput.button("驳回", value="reject"),
+            ]
+        else:
+            input_modes = [HumanInput.text()]
+
+    normalized = []
+    for mode in input_modes:
+        if isinstance(mode, HumanInput):
+            if mode.type == "text":
+                normalized.append({
+                    "type": "text",
+                    "placeholder": mode.placeholder,
+                })
+            elif mode.type == "button":
+                normalized.append({
+                    "type": "button",
+                    "label": mode.label or "",
+                    "value": mode.value,
+                    "confirm": bool(mode.confirm),
+                })
+        elif isinstance(mode, dict):
+            mode_type = mode.get("type", "button")
+            if mode_type == "text":
+                normalized.append({
+                    "type": "text",
+                    "placeholder": mode.get("placeholder"),
+                })
+            elif mode_type == "button":
+                label = mode.get("label", "")
+                normalized.append({
+                    "type": "button",
+                    "label": label,
+                    "value": label if mode.get("value") is None else mode.get("value"),
+                    "confirm": bool(mode.get("confirm", False)),
+                })
+    return normalized
 
 
 @dataclass
@@ -51,6 +124,7 @@ class HumanNode(BaseNode):
 
     # === 审批模式 ===
     approval_mode: bool = False             # 是否为审批模式（前端显示 approve/reject 按钮）
+    input_modes: Optional[InputModes | InputModesProvider] = None  # 输入模式：文本框、按钮或二者组合
 
     # === 超时配置 ===
     timeout_seconds: Optional[int] = None
@@ -58,6 +132,26 @@ class HumanNode(BaseNode):
 
     # === 上下文配置 ===
     save_to_context: bool = True            # 是否将用户输入保存到 __messages__
+
+    def resolve_input_modes(self, state: dict) -> Optional[InputModes]:
+        if callable(self.input_modes):
+            return self.input_modes(state)
+        return self.input_modes
+
+    def build_interrupt_payload(self, state: dict) -> dict:
+        payload = {
+            "node": self.id,
+            "waiting_for": self.feedback_field,
+            "__messages__": state.get("__messages__") or [],
+            "status": "waiting_for_input",
+            "input_modes": normalize_input_modes(
+                self.resolve_input_modes(state),
+                approval_mode=self.approval_mode,
+            ),
+        }
+        if self.approval_mode:
+            payload["approval_mode"] = True
+        return payload
 
     async def _do_execute(self, state: dict, context: WorkflowContext) -> dict:
         """
@@ -73,19 +167,12 @@ class HumanNode(BaseNode):
         try:
             from langgraph.types import interrupt
 
-            interrupt_payload = {
-                "node": self.id,
-                "waiting_for": self.feedback_field,
-                "__messages__": state.get("__messages__") or [],
-                "status": "waiting_for_input",
-            }
-            if self.approval_mode:
-                interrupt_payload["approval_mode"] = True
+            interrupt_payload = self.build_interrupt_payload(state)
 
             user_input = interrupt(interrupt_payload)
 
             # 恢复后执行到这里，将用户输入写入 state
-            if user_input:
+            if user_input is not None:
                 self._process_resume_input(state, user_input)
 
         except Exception as e:
@@ -94,7 +181,7 @@ class HumanNode(BaseNode):
                 logger.info(f"节点 {self.id} 使用内置引擎中断机制")
 
                 # 内置引擎模式：检查是否已经有用户输入（恢复模式）
-                if self.feedback_field in state and state[self.feedback_field]:
+                if self.feedback_field in state:
                     user_input = state[self.feedback_field]
                     self._process_resume_input(state, user_input)
                     return state
@@ -115,8 +202,18 @@ class HumanNode(BaseNode):
 
     def _process_resume_input(self, state: dict, user_input) -> None:
         """处理恢复输入，支持普通文本和结构化审批数据"""
+        if isinstance(user_input, dict) and "__human_input__" in user_input:
+            human_input = user_input["__human_input__"]
+            if isinstance(human_input, dict):
+                value = human_input.get("value")
+                state[self.feedback_field] = value
+                state["__human_input__"] = human_input
+                logger.info(f"节点 {self.id} 收到按钮输入: {str(value)[:50]}...")
+            else:
+                state[self.feedback_field] = human_input
+                logger.info(f"节点 {self.id} 收到结构化人工输入: {str(human_input)[:50]}...")
         # 结构化输入: {"__action__": "approve"/"reject", "text": "..."}
-        if isinstance(user_input, dict) and "__action__" in user_input:
+        elif isinstance(user_input, dict) and "__action__" in user_input:
             action = user_input["__action__"]
             text = user_input.get("text", "")
             state["__approved__"] = (action == "approve")

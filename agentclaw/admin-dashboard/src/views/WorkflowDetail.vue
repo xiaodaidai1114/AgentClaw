@@ -138,6 +138,7 @@ import PageHeader from '../components/PageHeader.vue'
 import WorkflowGraph from '../components/WorkflowGraph.vue'
 import { workflowsApi, tracesApi, modelsApi, settingsApi } from '../api'
 import { localizeBuiltinWorkflow } from '../utils/builtinWorkflowI18n'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 import { durationBarPercent, formatDuration, formatDateTime } from '../composables/useFormatters'
 import { useResizableDrawer } from '../composables/useResizableDrawer'
 import { toConversationModelOptions } from '../utils/models'
@@ -273,11 +274,11 @@ function traceRowProps(row) {
 
 async function fetchData() {
   try {
-    const res = await workflowsApi.get(workflowId.value)
+    const res = await withReadinessRetry(() => workflowsApi.get(workflowId.value))
     workflow.value = localizeBuiltinWorkflow(res.workflow, t)
     stats.value = res.stats
     try {
-      workflowSettings.value = await settingsApi.getWorkflow(workflowId.value)
+      workflowSettings.value = await withReadinessRetry(() => settingsApi.getWorkflow(workflowId.value))
     } catch {
       workflowSettings.value = null
     }

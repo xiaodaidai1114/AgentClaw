@@ -1119,6 +1119,9 @@ async def _stream_workflow(workflow, data: dict, context, thread_id: Optional[st
                 interrupt_info = state.get("__interrupt_info__")
                 if interrupt_info and isinstance(interrupt_info, dict):
                     outputs["interrupt_info"] = interrupt_info
+                next_input_info = state.get("next_input_info")
+                if next_input_info and isinstance(next_input_info, dict):
+                    outputs["next_input_info"] = next_input_info
                 await channel.push_workflow_finished(
                     status="interrupted" if is_interrupted else "succeeded",
                     outputs=outputs,

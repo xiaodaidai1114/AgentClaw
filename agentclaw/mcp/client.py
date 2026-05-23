@@ -21,12 +21,21 @@ logger = get_logger(__name__)
 
 _MCP_PROXY_ENV = "AGENTCLAW_MCP_PROXY"
 _MCP_PROXY_BYPASS_HOSTS = ("localhost", "127.0.0.1", "::1")
-_DEFAULT_MCP_TOOL_TIMEOUT = 300.0
+_DEFAULT_MCP_TOOL_TIMEOUT = 30.0
+_LONG_RUNNING_MCP_TOOL_TIMEOUT = 120.0
+_LONG_RUNNING_MCP_TOOL_NAMES = {
+    "python",
+    "javascript",
+    "shell",
+    "execute_sudo_command",
+}
 
 
-def _get_mcp_tool_timeout() -> float:
+def _get_mcp_tool_timeout(tool_name: Optional[str] = None) -> float:
     raw = os.getenv("AGENTCLAW_MCP_TOOL_TIMEOUT", "").strip()
     if not raw:
+        if tool_name in _LONG_RUNNING_MCP_TOOL_NAMES:
+            return _LONG_RUNNING_MCP_TOOL_TIMEOUT
         return _DEFAULT_MCP_TOOL_TIMEOUT
     try:
         parsed = float(raw)
@@ -217,10 +226,15 @@ class MCPClient:
         self._transport_context = None
         self._tools: Dict[str, MCPTool] = {}
         self._connected = False
+        self._connected_transport: Optional[TransportType] = None
     
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def connected_transport(self) -> Optional[TransportType]:
+        return self._connected_transport
 
     async def _close_contexts(self) -> None:
         """
@@ -294,6 +308,7 @@ class MCPClient:
                     logger.debug(f"MCP Server '{self.name}' 初始化成功")
 
                     self._connected = True
+                    self._connected_transport = transport
                     logger.info(f"MCP Server '{self.name}' 连接成功，工具数: {len(self._tools)}")
                     return
                 except asyncio.CancelledError as e:
@@ -320,6 +335,7 @@ class MCPClient:
                             task.uncancel()
 
                     self._connected = False
+                    self._connected_transport = None
                     self._tools.clear()
                     # 在当前任务内做尽力清理，避免在其它任务关闭 cancel scope 引发串扰
                     try:
@@ -477,6 +493,7 @@ class MCPClient:
         
         # 标记为已断开，防止重复调用
         self._connected = False
+        self._connected_transport = None
         self._tools.clear()
 
         await self._close_contexts()
@@ -524,13 +541,19 @@ class MCPClient:
         
         logger.info(f"调用 MCP 工具: {self.name}/{name}")
         
-        timeout = _get_mcp_tool_timeout()
+        timeout = _get_mcp_tool_timeout(name)
         try:
             result = await asyncio.wait_for(
                 self._session.call_tool(name, arguments),
                 timeout=timeout,
             )
         except asyncio.TimeoutError as exc:
+            try:
+                await asyncio.shield(self.disconnect())
+            except BaseException:
+                self._connected = False
+                self._connected_transport = None
+                self._tools.clear()
             raise TimeoutError(
                 f"MCP tool '{self.name}/{name}' timed out after {timeout:g}s"
             ) from exc

@@ -48,6 +48,66 @@ class TrendData(BaseModel):
     duration_points: Optional[List[DurationDataPoint]] = None
 
 
+class AgentSquareApp(BaseModel):
+    """Agent Square 内置应用"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: str = ""
+    tags: List[str] = []
+    workflow_id: str
+    recommended_input: Optional[str] = None
+    copyable: bool = True
+    inspectable: bool = True
+    registered: bool = False
+
+
+class AgentSquareAppsResponse(BaseModel):
+    """Agent Square 应用列表响应"""
+    apps: List[AgentSquareApp]
+
+
+class TemplateLibraryApp(BaseModel):
+    """模板库官方模板"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: str = ""
+    tags: List[str] = []
+    workflow_id: str
+    recommended_input: Optional[str] = None
+    copyable: bool = True
+    inspectable: bool = True
+    imported: bool = False
+    registered: bool = False
+    target_dir: Optional[str] = None
+    workflow_file: Optional[str] = None
+
+
+class TemplateLibraryAppsResponse(BaseModel):
+    """模板库列表响应"""
+    apps: List[TemplateLibraryApp]
+
+
+class TemplateLibraryImportRequest(BaseModel):
+    """导入模板请求"""
+    overwrite: bool = False
+
+
+class TemplateLibraryImportResponse(BaseModel):
+    """导入模板响应"""
+    success: bool = True
+    imported: bool = True
+    registered: bool = False
+    app_id: str
+    workflow_id: str
+    target_dir: str
+    workflow_file: str
+    init_path: Optional[str] = None
+    import_added: bool = False
+    message: Optional[str] = None
+
+
 class AvailableModel(BaseModel):
     """可用模型（用于节点模型切换）"""
     id: str

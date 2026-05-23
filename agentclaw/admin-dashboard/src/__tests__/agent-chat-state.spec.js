@@ -4,12 +4,95 @@ import { resolve } from 'node:path'
 
 import AgentChat from '../views/AgentChat.vue'
 import ChatMessage from '../components/chat/ChatMessage.vue'
-import { clearAdminToken, setAdminToken } from '../api'
+import { buildWorkflowRunInputs, clearAdminToken, setAdminToken } from '../api'
 import { agentRunManager } from '../utils/agentRunManager'
+
+const makeMountedCtx = (overrides = {}) => ({
+  workflowId: '',
+  $route: { params: { id: 'turtle_soup' }, query: {} },
+  $router: { replace: vi.fn() },
+  isPublicMode: false,
+  workflowLoadError: '',
+  currentWorkflowId: '',
+  isInitializing: false,
+  conversationId: '',
+  conversations: [],
+  inputText: '',
+  userInputFieldName: 'user_input',
+  workflowWelcome: '开场白',
+  loadWorkflow: vi.fn(async function () {
+    this.workflowWelcome = '开场白'
+    this.userInputFieldName = 'user_input'
+  }),
+  loadConversations: vi.fn(async function () {
+    this.conversations = []
+  }),
+  checkUploadStatus: vi.fn(async () => {}),
+  loadModels: vi.fn(async () => {}),
+  loadToolConfig: vi.fn(async () => {}),
+  loadConversation: vi.fn(async function (id) {
+    this.conversationId = id
+  }),
+  newConversation: vi.fn(async function () {
+    this.messages = []
+    if (this.workflowWelcome) this.messages.push({ role: 'welcome', content: this.workflowWelcome })
+    this.conversationId = 'conv-new'
+  }),
+  attachActiveRun: vi.fn(),
+  ...overrides,
+})
 
 describe('AgentChat conversation runtime state', () => {
   afterEach(() => {
     agentRunManager.clear()
+  })
+
+  it('builds text resume inputs through the frontend API layer', () => {
+    const inputs = buildWorkflowRunInputs({
+      baseInputs: { model: 'demo-model' },
+      userInput: '继续',
+      inputField: 'user_input',
+    })
+
+    expect(inputs).toEqual({
+      model: 'demo-model',
+      user_input: '继续',
+    })
+  })
+
+  it('builds button resume inputs through the frontend API layer', () => {
+    const inputs = buildWorkflowRunInputs({
+      baseInputs: {},
+      humanInput: {
+        field: 'sheriff_choice',
+        label: '上警',
+        value: 'join',
+      },
+    })
+
+    expect(inputs).toEqual({
+      sheriff_choice: 'join',
+      __human_input__: {
+        kind: 'button',
+        label: '上警',
+        value: 'join',
+        field: 'sheriff_choice',
+      },
+    })
+  })
+
+  it('preserves false button values in frontend API resume inputs', () => {
+    const inputs = buildWorkflowRunInputs({
+      baseInputs: {},
+      humanInput: {
+        field: 'confirm',
+        label: '取消',
+        value: false,
+      },
+    })
+
+    expect(inputs.confirm).toBe(false)
+    expect(inputs.__human_input__.value).toBe(false)
   })
 
   it('resets token counters when switching or creating conversations', () => {
@@ -112,8 +195,264 @@ describe('AgentChat conversation runtime state', () => {
     expect(enabled).toBe(false)
   })
 
+  it('stores HumanNode input modes from interrupt info', () => {
+    const ctx = {
+      userInputFieldName: 'user_input',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+    }
+
+    AgentChat.methods.applyHumanInterruptInfo.call(ctx, {
+      waiting_for: 'sheriff_choice',
+      input_modes: [
+        { type: 'button', label: '上警', value: '上警', confirm: false },
+      ],
+    })
+
+    expect(ctx.approvalMode).toBe(false)
+    expect(ctx.humanWaitingFor).toBe('sheriff_choice')
+    expect(ctx.humanInputModes).toEqual([
+      { type: 'button', label: '上警', value: '上警', confirm: false, field: 'sheriff_choice' },
+    ])
+  })
+
+  it('stores next-round input modes from successful workflow output', () => {
+    const ctx = {
+      userInputFieldName: 'user_input',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+      workflowStatus: 'running',
+      streamEndedByWorkflowEvent: false,
+      thinkingStatus: { text: 'running' },
+      currentTaskId: 'task-1',
+      streamingContent: '',
+      applyHumanInterruptInfo: AgentChat.methods.applyHumanInterruptInfo,
+    }
+
+    AgentChat.methods.handleStreamEvent.call(ctx, {
+      event: 'workflow_finished',
+      data: {
+        status: 'succeeded',
+        outputs: {
+          answer: '请选择是否上警。',
+          next_input_info: {
+            waiting_for: 'user_input',
+            input_modes: [
+              { type: 'button', label: '上警', value: '上警', confirm: false },
+              { type: 'button', label: '不上警', value: '不上警', confirm: false },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(ctx.workflowStatus).toBe('finished')
+    expect(ctx.humanWaitingFor).toBe('user_input')
+    expect(ctx.humanInputModes).toEqual([
+      { type: 'button', label: '上警', value: '上警', confirm: false, field: 'user_input' },
+      { type: 'button', label: '不上警', value: '不上警', confirm: false, field: 'user_input' },
+    ])
+  })
+
+  it('submits HumanNode button value to the waiting field', async () => {
+    const ctx = {
+      isStreaming: false,
+      conversationId: 'conv-1',
+      humanWaitingFor: 'sheriff_choice',
+      inputText: '',
+      inputError: '',
+      messages: [],
+      approvalMode: false,
+      humanInputModes: [{ type: 'button', label: '上警', value: 'join', field: 'sheriff_choice' }],
+      workflowStatus: 'interrupted',
+      streamingContent: '',
+      currentToolCalls: [],
+      nodeSteps: [],
+      todoItems: [],
+      streamEndedByWorkflowEvent: false,
+      thinkingStatus: null,
+      updateCurrentConversation: vi.fn(),
+      scrollToBottom: vi.fn(),
+      finishManagedRun: vi.fn(),
+      streamRequest: vi.fn(async () => {}),
+      $t: (key) => key,
+    }
+
+    await AgentChat.methods.submitHumanInputAction.call(ctx, {
+      label: '上警',
+      value: 'join',
+      mode: { field: 'sheriff_choice' },
+    })
+
+    expect(ctx.messages[0]).toMatchObject({ role: 'user', content: '上警', isInterruptResponse: true })
+    expect(ctx.streamRequest).toHaveBeenCalledWith(null, null, {
+      field: 'sheriff_choice',
+      label: '上警',
+      value: 'join',
+    })
+  })
+
+  it('sends HumanNode button values through inputs without human action', async () => {
+    const originalFetch = global.fetch
+    const writes = []
+    setAdminToken('admin-token')
+    global.fetch = vi.fn(async (_url, options) => {
+      writes.push(JSON.parse(options.body))
+      return {
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi.fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: [DONE]\\n') })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      }
+    })
+
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversationId: 'conv-1',
+      formData: {},
+      userInputFieldName: 'user_input',
+      selectedModel: '',
+      isBuiltin: false,
+      preFilterEnabled: true,
+      toolConfirmationRequired: false,
+      toolConfirmationLevel: 'off',
+      attachedFiles: [],
+      streamEndedByWorkflowEvent: true,
+      workflowStatus: 'running',
+      abortController: null,
+      streamingContent: '',
+      currentToolCalls: [],
+      nodeSteps: [],
+      reasoningContent: '',
+      currentPromptTokens: 0,
+      currentCompletionTokens: 0,
+      currentContextTokens: 0,
+      todoItems: [],
+      beginManagedRun: vi.fn(),
+      handleSseLine: vi.fn(),
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      markRunningStepsFailed: vi.fn(),
+      appendStreamError: vi.fn(),
+      $t: (key) => key,
+    }
+
+    try {
+      await AgentChat.methods.streamRequest.call(ctx, null, null, {
+        field: 'sheriff_choice',
+        label: '上警',
+        value: 'join',
+      })
+    } finally {
+      global.fetch = originalFetch
+      clearAdminToken()
+    }
+
+    expect(writes[0].inputs).toEqual({
+      sheriff_choice: 'join',
+      __human_input__: {
+        kind: 'button',
+        label: '上警',
+        value: 'join',
+        field: 'sheriff_choice',
+      },
+    })
+    expect(writes[0].inputs.__human_action__).toBeUndefined()
+  })
+
+  it('shows workflow welcome when creating a new conversation', async () => {
+    const remoteConversation = { id: 'conv-welcome', title: 'New', messages: [] }
+    const ctx = {
+      workflowLoadError: '',
+      isStreaming: false,
+      messages: [{ role: 'user', content: 'old' }],
+      attachedFiles: ['file'],
+      workflowWelcome: '海龟汤开场白',
+      conversations: [],
+      isPublicMode: false,
+      currentWorkflowId: 'turtle_soup',
+      shareToken: '',
+      convApi: {
+        create: vi.fn(async () => remoteConversation),
+        update: vi.fn(async () => {}),
+      },
+      $route: { query: {} },
+      $router: { replace: vi.fn() },
+      saveConversationsToLocal: vi.fn(),
+      resetConversationRuntimeState: vi.fn(),
+      createConversationShell: AgentChat.methods.createConversationShell,
+      navigateToConversation: AgentChat.methods.navigateToConversation,
+      $t: (key) => key,
+    }
+
+    await AgentChat.methods.newConversation.call(ctx)
+
+    expect(ctx.messages).toEqual([{ role: 'welcome', content: '海龟汤开场白' }])
+    expect(ctx.conversationId).toBe('conv-welcome')
+    expect(ctx.conversations[0].messages).toEqual([{ role: 'welcome', content: '海龟汤开场白' }])
+    expect(ctx.convApi.update).toHaveBeenCalledWith(
+      'turtle_soup',
+      'conv-welcome',
+      { title: 'New', messages: [{ role: 'welcome', content: '海龟汤开场白' }] },
+      '',
+    )
+  })
+
+  it('shows workflow welcome when loading an existing empty conversation', async () => {
+    const ctx = {
+      isStreaming: false,
+      attachedFiles: ['file'],
+      showAllMessages: true,
+      messages: [{ role: 'user', content: 'old' }],
+      nodeSteps: [{ id: 'agent' }],
+      conversationLoadSeq: 0,
+      workflowWelcome: '海龟汤开场白',
+      conversations: [{ id: 'conv-empty', title: 'Empty', messages: [] }],
+      currentWorkflowId: 'turtle_soup',
+      isPublicMode: false,
+      $route: { query: {} },
+      $router: { replace: vi.fn() },
+      resetConversationRuntimeState: vi.fn(),
+      normalizeAssistantMessages: AgentChat.methods.normalizeAssistantMessages,
+      localizeNodeSteps: AgentChat.methods.localizeNodeSteps,
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      loadFeedbackFromDb: vi.fn(),
+      scrollToBottom: vi.fn(),
+      restoreInterruptState: vi.fn(),
+      attachActiveRun: vi.fn(() => false),
+      $t: (key) => key,
+    }
+
+    await AgentChat.methods.loadConversation.call(ctx, 'conv-empty')
+
+    expect(ctx.conversationId).toBe('conv-empty')
+    expect(ctx.messages).toEqual([{ role: 'welcome', content: '海龟汤开场白' }])
+  })
+
+  it('consumes route seed input once and removes it before later new conversations', async () => {
+    const ctx = makeMountedCtx({
+      $route: {
+        params: { id: 'turtle_soup' },
+        query: { seed_input: '我想玩一个日常系海龟汤。' },
+      },
+    })
+
+    await AgentChat.mounted.call(ctx)
+
+    expect(ctx.inputText).toBe('我想玩一个日常系海龟汤。')
+    expect(ctx.newConversation).toHaveBeenCalledOnce()
+    expect(ctx.$router.replace).toHaveBeenCalledWith({ query: {} })
+  })
+
   it('allows no-input workflows to show a standalone start action', () => {
     const ctx = {
+      workflowLoadError: '',
       isInitializing: false,
       conversationId: 'conv-1',
       userInputFieldName: '',
@@ -121,6 +460,107 @@ describe('AgentChat conversation runtime state', () => {
     }
 
     expect(AgentChat.computed.canStartWorkflow.call(ctx)).toBe(true)
+  })
+
+  it('shows a parameter-start hint for form-only workflows', () => {
+    const ctx = {
+      workflowLoadError: '',
+      isInitializing: false,
+      conversationId: 'conv-1',
+      userInputFieldName: '',
+      formConfig: [
+        { name: 'documents', type: 'files-upload', required: true },
+        { name: 'question', type: 'text', required: false },
+      ],
+      models: [],
+      workflowStatus: 'idle',
+      humanWaitingFor: '',
+      $t: (key) => key,
+    }
+    ctx.formFields = AgentChat.computed.formFields.call(ctx)
+    ctx.canStartWorkflow = AgentChat.computed.canStartWorkflow.call(ctx)
+
+    expect(AgentChat.computed.hasFormFields.call(ctx)).toBe(true)
+    expect(ctx.canStartWorkflow).toBe(true)
+    expect(AgentChat.computed.inputEnabled.call(ctx)).toBe(false)
+    expect(AgentChat.computed.workflowStartHint.call(ctx)).toBe('agentChat.formOnlyWorkflowHint')
+  })
+
+  it('lets form-only workflows start even when a conversation has not been prepared yet', async () => {
+    const ctx = {
+      workflowLoadError: '',
+      isInitializing: false,
+      conversationId: '',
+      conversations: [],
+      userInputFieldName: '',
+      formConfig: [
+        { name: 'documents', type: 'files-upload', required: true },
+        { name: 'question', type: 'text', required: false },
+      ],
+      models: [],
+      formData: {
+        documents: [{ file_path: '/uploads/doc.md', original_name: '开发文档.md' }],
+        question: '请总结这些文档的主要内容',
+      },
+      workflowStatus: 'idle',
+      messages: [],
+      currentToolCalls: [],
+      nodeSteps: [],
+      todoItems: [],
+      streamEndedByWorkflowEvent: false,
+      thinkingStatus: null,
+      lastStreamingDraftPersistAt: 0,
+      validateFormData: vi.fn(() => true),
+      saveFormCache: vi.fn(),
+      streamRequest: vi.fn(async function () {
+        this.conversationId = 'conv-created'
+      }),
+      updateCurrentConversation: vi.fn(),
+      scrollToBottom: vi.fn(),
+      finishManagedRun: vi.fn(),
+      $t: (key) => key,
+    }
+    ctx.formFields = AgentChat.computed.formFields.call(ctx)
+    ctx.canStartWorkflow = AgentChat.computed.canStartWorkflow.call(ctx)
+
+    expect(ctx.canStartWorkflow).toBe(true)
+    expect(AgentChat.computed.workflowStartHint.call(ctx)).toBe('agentChat.formOnlyWorkflowHint')
+
+    await AgentChat.methods.startWorkflow.call(ctx)
+
+    expect(ctx.streamRequest).toHaveBeenCalledWith(null)
+    expect(ctx.conversationId).toBe('conv-created')
+  })
+
+  it('keeps direct chat input enabled for templates whose schema has user_input', () => {
+    const weeklyCtx = {
+      workflowLoadError: '',
+      isInitializing: false,
+      conversationId: 'conv-1',
+      userInputFieldName: 'user_input',
+      formConfig: [
+        { name: 'user_input', type: 'text', required: true },
+      ],
+      models: [],
+      workflowStatus: 'idle',
+      humanWaitingFor: '',
+    }
+    const reportCtx = {
+      ...weeklyCtx,
+      formConfig: [
+        { name: 'user_input', type: 'text', required: true },
+        { name: 'report_title', type: 'text', required: false },
+      ],
+    }
+    weeklyCtx.formFields = AgentChat.computed.formFields.call(weeklyCtx)
+    reportCtx.formFields = AgentChat.computed.formFields.call(reportCtx)
+
+    expect(AgentChat.computed.hasFormFields.call(weeklyCtx)).toBe(false)
+    expect(AgentChat.computed.inputEnabled.call(weeklyCtx)).toBe(true)
+    expect(AgentChat.computed.canStartWorkflow.call(weeklyCtx)).toBe(false)
+    expect(AgentChat.computed.hasFormFields.call(reportCtx)).toBe(true)
+    expect(AgentChat.computed.inputEnabled.call(reportCtx)).toBe(true)
+    expect(AgentChat.computed.canStartWorkflow.call(reportCtx)).toBe(false)
   })
 
   it('validates chat input before sending', async () => {
@@ -224,6 +664,225 @@ describe('AgentChat conversation runtime state', () => {
     const stored = JSON.parse(localStorage.getItem('agent_conversations_workflow-1'))
     expect(stored.find(item => item.id === 'conv-running').messages[0].content).toBe('done')
     expect(stored.find(item => item.id === 'conv-other').messages[0].content).toBe('fresh')
+  })
+
+  it('prefers local conversation messages over empty remote messages after interrupted runs', async () => {
+    localStorage.clear()
+    localStorage.setItem('agent_conversations_workflow-1', JSON.stringify([
+      {
+        id: 'conv-interrupted',
+        title: 'Interrupted',
+        messages: [
+          { role: 'user', content: 'start' },
+          { role: 'assistant', content: 'partial output', pendingApproval: true },
+        ],
+        updated_at: 300,
+      },
+    ]))
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversations: [],
+      convApi: {
+        list: vi.fn(async () => ({
+          conversations: [
+            {
+              id: 'conv-interrupted',
+              title: 'Interrupted',
+              messages: [],
+              updated_at: 400,
+            },
+          ],
+        })),
+      },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(ctx.conversations[0].messages).toEqual([
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: 'partial output', pendingApproval: true },
+    ])
+  })
+
+  it('persists streaming output as a draft assistant message before the workflow finishes', () => {
+    localStorage.clear()
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversationId: 'conv-running',
+      conversations: [{
+        id: 'conv-running',
+        title: 'Running',
+        messages: [{ role: 'user', content: 'start' }],
+      }],
+      messages: [{ role: 'user', content: 'start' }],
+      streamingContent: 'partial answer',
+      reasoningContent: 'thinking',
+      currentToolCalls: [],
+      nodeSteps: [{ id: 'human', status: 'running', expanded: true }],
+      currentPromptTokens: 10,
+      currentCompletionTokens: 5,
+      currentContextTokens: 100,
+      workflowStatus: 'running',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+      saveConversationsToLocal: AgentChat.methods.saveConversationsToLocal,
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      buildStreamingAssistantMessage: AgentChat.methods.buildStreamingAssistantMessage,
+      upsertStreamingAssistantMessage: AgentChat.methods.upsertStreamingAssistantMessage,
+      $t: (key) => key,
+    }
+
+    AgentChat.methods.persistStreamingAssistantDraft.call(ctx)
+
+    expect(ctx.messages).toHaveLength(2)
+    expect(ctx.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'partial answer',
+      reasoning: 'thinking',
+      streamingDraft: true,
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      context_tokens: 100,
+    })
+    expect(ctx.messages[1].nodeSteps[0]).toMatchObject({ id: 'human', status: 'running', expanded: false })
+    const stored = JSON.parse(localStorage.getItem('agent_conversations_workflow-1'))
+    expect(stored[0].messages[1]).toMatchObject({ role: 'assistant', content: 'partial answer', streamingDraft: true })
+  })
+
+  it('persists HumanNode interrupted input state with the assistant message and restores it', () => {
+    localStorage.clear()
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversationId: 'conv-human',
+      conversations: [{
+        id: 'conv-human',
+        title: 'Human',
+        messages: [{ role: 'user', content: 'start' }],
+      }],
+      messages: [{ role: 'user', content: 'start' }],
+      streamingContent: '',
+      reasoningContent: '',
+      currentToolCalls: [],
+      nodeSteps: [{ id: 'human_input', status: 'succeeded' }],
+      currentPromptTokens: 0,
+      currentCompletionTokens: 0,
+      currentContextTokens: 0,
+      workflowStatus: 'running',
+      streamEndedByWorkflowEvent: false,
+      thinkingStatus: { text: 'running' },
+      currentTaskId: 'task-1',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+      saveConversationsToLocal: AgentChat.methods.saveConversationsToLocal,
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      applyHumanInterruptInfo: AgentChat.methods.applyHumanInterruptInfo,
+      buildStreamingAssistantMessage: AgentChat.methods.buildStreamingAssistantMessage,
+      upsertStreamingAssistantMessage: AgentChat.methods.upsertStreamingAssistantMessage,
+      persistStreamingAssistantDraft: AgentChat.methods.persistStreamingAssistantDraft,
+      publishRunSnapshot: vi.fn(),
+      scrollToBottom: vi.fn(),
+      convApi: { update: vi.fn(async () => {}) },
+      shareToken: '',
+      $t: (key) => key,
+    }
+
+    AgentChat.methods.handleStreamEvent.call(ctx, {
+      event: 'workflow_finished',
+      data: {
+        status: 'interrupted',
+        outputs: {
+          answer: '请选择是否继续。',
+          interrupt_info: {
+            waiting_for: 'next_step',
+            input_modes: [
+              { type: 'button', label: '继续', value: 'continue', confirm: false },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(ctx.workflowStatus).toBe('interrupted')
+    expect(ctx.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '请选择是否继续。',
+      pendingHumanInput: true,
+      humanWaitingFor: 'next_step',
+      streamingDraft: true,
+    })
+    expect(ctx.messages[1].humanInputModes).toEqual([
+      { type: 'button', label: '继续', value: 'continue', confirm: false, field: 'next_step' },
+    ])
+
+    const restoreCtx = {
+      messages: ctx.messages,
+      userInputFieldName: 'user_input',
+      workflowStatus: 'idle',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+    }
+    AgentChat.methods.restoreInterruptState.call(restoreCtx)
+
+    expect(restoreCtx.workflowStatus).toBe('interrupted')
+    expect(restoreCtx.approvalMode).toBe(false)
+    expect(restoreCtx.humanWaitingFor).toBe('next_step')
+    expect(restoreCtx.humanInputModes).toEqual([
+      { type: 'button', label: '继续', value: 'continue', confirm: false, field: 'next_step' },
+    ])
+  })
+
+  it('finalizes an existing streaming draft instead of appending a duplicate assistant message', () => {
+    const ctx = {
+      messages: [
+        { role: 'user', content: 'start' },
+        { role: 'assistant', content: 'partial', streamingDraft: true },
+      ],
+      streamingContent: 'final answer',
+      reasoningContent: '',
+      currentToolCalls: [],
+      nodeSteps: [],
+      currentPromptTokens: 0,
+      currentCompletionTokens: 0,
+      currentContextTokens: 0,
+      workflowStatus: 'finished',
+      approvalMode: false,
+      humanWaitingFor: '',
+      humanInputModes: null,
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      buildStreamingAssistantMessage: AgentChat.methods.buildStreamingAssistantMessage,
+      $t: (key) => key,
+    }
+
+    AgentChat.methods.upsertStreamingAssistantMessage.call(ctx, { draft: false })
+
+    expect(ctx.messages).toHaveLength(2)
+    expect(ctx.messages[1]).toMatchObject({ role: 'assistant', content: 'final answer' })
+    expect(ctx.messages[1].streamingDraft).toBeUndefined()
+  })
+
+  it('hides persisted streaming drafts from the normal message list while streaming', () => {
+    const ctx = {
+      isStreaming: true,
+      messages: [
+        { role: 'user', content: 'start' },
+        { role: 'assistant', content: 'partial', streamingDraft: true },
+      ],
+      getRenderableMessages: AgentChat.methods.getRenderableMessages,
+      showAllMessages: true,
+      dynamicVisibleCount: 20,
+    }
+
+    expect(AgentChat.computed.visibleMessages.call(ctx)).toEqual([{ role: 'user', content: 'start' }])
+
+    ctx.isStreaming = false
+
+    expect(AgentChat.computed.visibleMessages.call(ctx)).toEqual(ctx.messages)
   })
 
   it('removes deleted conversations from local cache instead of merging them back', async () => {

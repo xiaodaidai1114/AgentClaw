@@ -248,6 +248,7 @@ import {
 import PageHeader from '../components/PageHeader.vue'
 import { schedulerApi } from '../api'
 import { formatDuration, formatDateTime } from '../composables/useFormatters'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const route = useRoute()
 const router = useRouter()
@@ -340,7 +341,7 @@ async function fetchJob() {
   loading.value = true
   loadError.value = ''
   try {
-    job.value = await schedulerApi.getJob(jobId)
+    job.value = await withReadinessRetry(() => schedulerApi.getJob(jobId))
   } catch (e) {
     if (e.response?.status === 404) job.value = null
     else loadError.value = e.response?.data?.error || e.message || t('schedulerDetail.loadFailed')

@@ -81,6 +81,7 @@ import {
 } from 'naive-ui'
 import { knowledgebaseApi } from '../api'
 import { highlightTextSafe } from '../utils/sanitize'
+import { withReadinessRetry } from '../utils/eventualConsistency'
 
 const route = useRoute()
 const router = useRouter()
@@ -130,7 +131,7 @@ async function copyResult(text) {
 
 async function fetchKnowledgebase() {
   try {
-    const res = await knowledgebaseApi.get(route.params.id)
+    const res = await withReadinessRetry(() => knowledgebaseApi.get(route.params.id))
     const retrieval = res.retrieval_config || {}
     knowledgebase.value = {
       name: res.name || t('knowledgebaseSearch.defaultKnowledgebaseName'),

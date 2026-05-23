@@ -64,6 +64,10 @@ from agentclaw.api.schemas.dashboard import (
     AvailableModelsResponse,
     NodeModelUpdateRequest,
     NodeModelUpdateResponse,
+    TemplateLibraryApp,
+    TemplateLibraryAppsResponse,
+    TemplateLibraryImportRequest,
+    TemplateLibraryImportResponse,
 )
 from agentclaw.api.schemas.conversation import (
     ConversationMessage,
@@ -138,6 +142,10 @@ __all__ = [
     "AvailableModelsResponse",
     "NodeModelUpdateRequest",
     "NodeModelUpdateResponse",
+    "TemplateLibraryApp",
+    "TemplateLibraryAppsResponse",
+    "TemplateLibraryImportRequest",
+    "TemplateLibraryImportResponse",
     # Conversation
     "ConversationMessage",
     "ConversationInfo",

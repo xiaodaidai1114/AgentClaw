@@ -4,6 +4,18 @@
       <div class="drop-overlay-content">{{ $t('chatInput.dropToUpload') }}</div>
     </div>
     <div class="input-wrapper">
+      <div v-if="buttonModes.length" class="input-actions">
+        <button
+          v-for="(mode, index) in buttonModes"
+          :key="`${mode.label || 'button'}-${index}`"
+          class="input-action-btn"
+          type="button"
+          :disabled="!enabled || isStreaming"
+          @click="onInputAction(mode)"
+        >
+          {{ mode.label }}
+        </button>
+      </div>
       <div class="input-container" :class="{ focused: inputFocused }">
         <!-- 错误提示 -->
         <div v-if="inputError" class="input-error">{{ inputError }}</div>
@@ -15,6 +27,7 @@
           </div>
         </div>
         <textarea
+          v-if="showsTextInput"
           ref="textarea"
           class="input-textarea"
           :placeholder="resolvedPlaceholder"
@@ -76,8 +89,9 @@ export default {
     attachedFiles: { type: Array, default: () => [] },
     inputError: { type: String, default: '' },
     canCompressContext: { type: Boolean, default: false },
+    inputModes: { type: Array, default: null },
   },
-  emits: ['update:modelValue', 'send', 'attach', 'clear', 'remove-file', 'drop-files', 'compress-context'],
+  emits: ['update:modelValue', 'send', 'action', 'attach', 'clear', 'remove-file', 'drop-files', 'compress-context'],
   data() {
     return { inputFocused: false, isDragging: false }
   },
@@ -88,6 +102,17 @@ export default {
     },
     canSend() {
       return this.enabled && this.text.trim() && !this.inputError
+    },
+    normalizedInputModes() {
+      return Array.isArray(this.inputModes) && this.inputModes.length
+        ? this.inputModes
+        : [{ type: 'text' }]
+    },
+    showsTextInput() {
+      return this.normalizedInputModes.some(mode => mode && mode.type === 'text')
+    },
+    buttonModes() {
+      return this.normalizedInputModes.filter(mode => mode && mode.type === 'button')
     },
     resolvedPlaceholder() {
       return this.placeholder || this.$t('chatInput.placeholder')
@@ -131,6 +156,12 @@ export default {
         e.preventDefault()
         this.$emit('send')
       }
+    },
+    onInputAction(mode) {
+      if (!mode || !this.enabled || this.isStreaming) return
+      if (mode.confirm && !window.confirm(mode.label)) return
+      const value = Object.prototype.hasOwnProperty.call(mode, 'value') ? mode.value : mode.label
+      this.$emit('action', { label: mode.label, value, mode })
     },
     focus() {
       this.$refs.textarea?.focus()
@@ -176,7 +207,13 @@ export default {
   font-size: 14px; font-weight: 600;
   box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
-.input-wrapper { width: 100%; max-width: 880px; }
+.input-wrapper {
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .input-container {
   background: var(--bg-app, #fff); border: 1px solid var(--border-base, #e4e4e7);
   border-radius: var(--radius-lg, 18px); box-shadow: var(--shadow-float);
@@ -204,6 +241,37 @@ export default {
 }
 .input-textarea::placeholder { color: var(--text-muted, #a1a1aa); }
 .input-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.input-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px;
+  justify-content: flex-start;
+}
+
+.input-action-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-base, #e4e4e7);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-hover, #f8fafc);
+  color: var(--text-main, #18181b);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.input-action-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.input-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .input-toolbar {
   display: flex; justify-content: space-between; align-items: flex-end;

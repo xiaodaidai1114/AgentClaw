@@ -849,7 +849,12 @@ async def _execute_tool(
             result = await toolkit.execute(tool_name, tool_arguments, state)
             return _wrap_outcome(result)
         except Exception as e:
-            logger.error(f"Toolkit tool '{tool_name}' execution failed: {e}")
+            logger.error(
+                "Toolkit tool '%s' execution failed: %s: %r",
+                tool_name,
+                type(e).__name__,
+                e,
+            )
             return _wrap_outcome(f"[ERROR] Tool '{tool_name}' failed: {e}", explicit_status="failed")
 
     return _wrap_outcome(f"[ERROR] Tool '{tool_name}' not found in any toolkit", explicit_status="failed")

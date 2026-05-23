@@ -8,8 +8,9 @@ from agentclaw.node.types import ErrorStrategy
 from agentclaw.node.base import BaseNode
 from agentclaw.node.custom import CustomNode, SyncNode, node
 from agentclaw.node.llm import LLMNode
-from agentclaw.node.human import HumanNode
+from agentclaw.node.human import HumanInput, HumanNode
 from agentclaw.node.sub_workflow import SubWorkflowNode
+from agentclaw.node.state_extract import StateExtractNode
 from agentclaw.node.document import DocumentNode, DocumentExtractNode
 from agentclaw.node.knowledgebase import KnowledgeBaseNode
 from agentclaw.node.toolkit import ToolKit, Tool, tool
@@ -24,8 +25,10 @@ __all__ = [
     "node",  # 函数式节点装饰器
     # Built-in Nodes
     "LLMNode",
+    "HumanInput",
     "HumanNode",
     "SubWorkflowNode",
+    "StateExtractNode",
     "DocumentNode",
     "DocumentExtractNode",
     "KnowledgeBaseNode",

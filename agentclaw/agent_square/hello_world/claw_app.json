@@ -1,0 +1,18 @@
+{
+  "id": "hello_world",
+  "name": "01 Hello World",
+  "description": "最基础的 LLM 对话示例：单轮问答、流式输出与 thread_id 多轮对话。",
+  "tags": [
+    "示例",
+    "LLM",
+    "聊天",
+    "流式输出"
+  ],
+  "entry": "agents/hello_world.py",
+  "workflow_id": "hello_world",
+  "recommended_input": "你好，简单介绍一下你能做什么。",
+  "category": "example",
+  "workflow": "agents/hello_world.py",
+  "copyable": true,
+  "inspectable": true
+}

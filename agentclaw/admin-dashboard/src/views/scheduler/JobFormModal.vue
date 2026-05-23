@@ -149,6 +149,7 @@ import {
 } from 'naive-ui'
 import CronBuilder from '../../components/CronBuilder.vue'
 import { schedulerApi, workflowsApi } from '../../api'
+import { withReadinessRetry } from '../../utils/eventualConsistency'
 
 const props = defineProps({
   visible: Boolean,
@@ -285,7 +286,7 @@ async function onWorkflowChange() {
     return
   }
   try {
-    const detail = await workflowsApi.get(form.workflow_id)
+    const detail = await withReadinessRetry(() => workflowsApi.get(form.workflow_id))
     const config = detail.workflow?.form_config || detail.form_config || []
     workflowFormConfigs.value[form.workflow_id] = config
     applyFormConfig(config)

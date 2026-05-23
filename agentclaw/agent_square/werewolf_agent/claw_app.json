@@ -1,0 +1,13 @@
+{
+  "id": "ai_werewolf",
+  "name": "AI 狼人杀主持人",
+  "description": "基于主工作流状态机和 12 个角色子工作流的 AI 狼人杀：支持首夜、警长竞选、警徽移交、遗言、猎人/狼王开枪、白痴翻牌、放逐投票与狼人自爆。",
+  "category": "game",
+  "tags": ["游戏", "狼人杀", "多轮互动", "隐藏信息", "状态机"],
+  "entry": "agents/werewolf.py",
+  "workflow": "agents/werewolf.py",
+  "workflow_id": "ai_werewolf",
+  "recommended_input": "开始游戏",
+  "copyable": true,
+  "inspectable": true
+}
