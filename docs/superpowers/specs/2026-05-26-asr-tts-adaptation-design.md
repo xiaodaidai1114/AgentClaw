@@ -85,6 +85,44 @@ The first implementation should embed only:
 
 This gives broad coverage without introducing a plugin marketplace or many optional dependencies.
 
+## Provider Format Matrix
+
+This section records the ASR/TTS formats observed from `dify-official-plugins`. Here, "channel" means model provider channel, not IM platform channel. The IM platforms should still only pass `AudioArtifact` or receive `AudioStream`.
+
+| Provider channel | ASR input format | ASR output format | TTS input format | TTS output format | Voice format | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `openai` | File-like audio object passed to OpenAI SDK `audio.transcriptions.create(model, file)` | `response.text` string | OpenAI SDK `audio.speech.with_streaming_response.create(model, voice, response_format, input)` | Byte stream from `iter_bytes`; Dify YAML defaults to `mp3` | Static YAML voices: `{mode, name, language}`; exposed as `{name, value}` where `value=mode` | Best P0 adapter. Preserve filename/ext when creating file object. |
+| `openai_api_compatible` | Multipart HTTP POST to `{endpoint_url}/audio/transcriptions`; form fields include `model`, `language`, `prompt`; file field is `file` | JSON `text` field | Uses Dify's OpenAI-compatible TTS base class; treat as OpenAI speech API shape | Usually byte stream, provider-specific but expected OpenAI-compatible | Static or customizable model metadata | P0 adapter can use OpenAI SDK with `base_url`, or raw HTTP for stricter compatibility. |
+| `azure_openai` | Same logical shape as OpenAI, with Azure endpoint/deployment credentials | Text string | Same logical shape as OpenAI, with Azure endpoint/deployment credentials | Byte stream, commonly `mp3` | Same OpenAI-style voices for OpenAI TTS deployments | Can reuse OpenAI adapter with Azure credential mapping later. |
+| `groq` | OpenAI-compatible ASR endpoint | JSON/text from compatible transcriptions API | Not supported in Dify plugin | Not supported | Not applicable | ASR-only; can be covered by compatible ASR path. |
+| `siliconflow` | OpenAI-compatible ASR; plugin injects `endpoint_url` | Text string | OpenAI speech API style; plugin uses OpenAI client with SiliconFlow `base_url` | Streaming `mp3` bytes | Model YAML voices/default voice | Mostly covered by compatible adapter, but endpoint mapping is provider-specific. |
+| `tongyi` | File-like audio; plugin detects audio format by magic bytes or `pydub`, reads sample rate, writes temp file, calls DashScope `Recognition` | Joined sentence text string | DashScope `MultiModalConversation.call(model, text, voice)` returns audio URL; plugin downloads bytes | Downloaded audio bytes; YAML default `audio_type=mp3` | Static YAML voices `{mode, name, language}`; default `Cherry` for `qwen3-tts-flash` | Needs `dashscope`, `pydub`, and possibly ffmpeg. Good P1/P2 for Chinese ecosystem. |
+| `minimax` | Not supported in Dify plugin | Not supported | HTTP POST to `/v1/t2a_v2?GroupId=...`; JSON includes `model`, `text`, `stream=true`, `voice_setting`, `audio_setting` | SSE-like raw chunks where `data.data.audio` is hex; adapter yields `bytes.fromhex(audio)` | Dynamic voices from `/v1/get_voice`, exposed as `{name, value, language}`; YAML default `male-qn-qingse` | TTS-only. Useful later for richer voice inventory. |
+| `fishaudio` | SDK `ASRRequest(audio=file.read(), ignore_timestamps=False)` | `session.asr(request).text` | SDK `TTSRequest(text, format="mp3", reference_id=voice, latency)` | SDK generator yielding audio bytes, forced `mp3` in Dify plugin | Dynamic voice/model list from `session.list_models`; exposed as `{name: title, value: id}` | TTS `voice` is a reference model id, not a simple timbre name. |
+| `xinference` | RESTful audio model handle `transcriptions(audio=file, language, prompt, response_format, temperature)` | Response JSON `text` | RESTful audio model handle `speech(input, voice, response_format="mp3", speed, stream=True)` | Streaming bytes, usually `mp3` | Static family-based voices for `ChatTTS`, `CosyVoice`, or default `{Default/default}` | Self-hosted P2 path. |
+| `gpustack` | OpenAI-compatible ASR after normalizing endpoint to `/v1` | Text string | OpenAI-compatible TTS after normalizing endpoint to `/v1` | Byte stream | Compatible voice handling | Self-hosted; can reuse compatible adapter with endpoint normalization. |
+| `localai` | OpenAI-compatible ASR | Text string | Not supported in Dify plugin | Not supported | Not applicable | ASR-only self-hosted. |
+| `gitee_ai` | OpenAI-compatible ASR with fixed endpoint `https://ai.gitee.com/v1` | Text string | Custom HTTP POST to `/v1/audio/speech`; plugin receives wav bytes, tries to convert to mp3 with `pydub`, falls back to original bytes | Usually `mp3` after conversion, or raw wav fallback | Model YAML/default behavior | P2 because output normalization has extra dependencies. |
+
+Provider-specific model metadata from Dify should map into our config as optional fields:
+
+- ASR: `file_upload_limit_mb`, `supported_file_extensions`.
+- TTS: `voice`, `voices`, `audio_format`, `word_limit`.
+- Dynamic voice providers such as MiniMax and FishAudio should implement `voices()` by calling the provider API; static voice providers can return local metadata.
+
+The normalized fast_agent boundary remains:
+
+```text
+ASR provider adapter:
+AudioArtifact(data, mime_type, filename, ext) -> str
+
+TTS provider adapter:
+text + voice + model config -> AudioStream(chunks, mime_type, ext)
+
+Voices provider adapter:
+model config + language? -> list[Voice(name, value, language?)]
+```
+
 ## Existing fast_agent Fit
 
 Current relevant code shape:
