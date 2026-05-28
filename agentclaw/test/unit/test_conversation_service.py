@@ -46,6 +46,7 @@ def test_conversation_service_returns_stable_fallbacks_without_database(monkeypa
     summary = _run(service.get_feedback_summary_map, ["wf-1", "", "wf-2"])
 
     assert created["id"].startswith("conv_")
+    assert len(created["id"]) >= len("conv_") + 24
     assert created["messages"] == []
     assert created["source"] == "public"
     assert created["owner_id"] == "owner-1"

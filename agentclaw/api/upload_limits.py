@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from fnmatch import fnmatch
+from typing import Any, Iterable, Mapping
 
 from fastapi import HTTPException, Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -29,18 +30,25 @@ class RequestBodyLimitMiddleware:
         max_size: int,
         path_prefixes: Iterable[str] = ("/",),
         excluded_path_prefixes: Iterable[str] = (),
+        path_limits: Mapping[str, int] | None = None,
     ):
         self.app = app
         self.limit = max_size
         self.path_prefixes = tuple(path_prefixes)
         self.excluded_path_prefixes = tuple(excluded_path_prefixes)
+        self.path_limits = {
+            prefix.rstrip("/") or "/": limit
+            for prefix, limit in (path_limits or {}).items()
+            if limit > 0
+        }
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not self._matches_path(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
 
-        if self._content_length_exceeds_limit(scope):
+        limit = self._limit_for_path(scope.get("path", ""))
+        if self._content_length_exceeds_limit(scope, limit):
             await self._send_413(send)
             return
 
@@ -52,7 +60,7 @@ class RequestBodyLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 total += len(message.get("body", b""))
-                if total > self.limit:
+                if total > limit:
                     raise UploadTooLarge()
             return message
 
@@ -80,12 +88,22 @@ class RequestBodyLimitMiddleware:
             return True
         return path == normalized or path.startswith(f"{normalized}/")
 
-    def _content_length_exceeds_limit(self, scope: Scope) -> bool:
+    def _limit_for_path(self, path: str) -> int:
+        for pattern, limit in self.path_limits.items():
+            if "*" in pattern:
+                matches = fnmatch(path, pattern)
+            else:
+                matches = self._prefix_matches(path, pattern)
+            if matches:
+                return limit
+        return self.limit
+
+    def _content_length_exceeds_limit(self, scope: Scope, limit: int) -> bool:
         for key, value in scope.get("headers", []):
             if key.lower() != b"content-length":
                 continue
             try:
-                return int(value.decode("ascii")) > self.limit
+                return int(value.decode("ascii")) > limit
             except (TypeError, ValueError, UnicodeDecodeError):
                 return False
         return False

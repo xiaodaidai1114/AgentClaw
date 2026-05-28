@@ -13,6 +13,7 @@ from agentclaw.api.routers.admin.workflows import router as workflows_router
 from agentclaw.api.routers.admin.traces import router as traces_router
 from agentclaw.api.routers.admin.prompts import router as prompts_router
 from agentclaw.api.routers.admin.models import router as models_router
+from agentclaw.api.routers.admin.audio import router as audio_router
 from agentclaw.api.routers.admin.dashboard import router as dashboard_router
 from agentclaw.api.routers.admin.debug import router as debug_router
 from agentclaw.api.routers.admin.conversations import router as conversations_router
@@ -31,6 +32,7 @@ router.include_router(workflows_router)
 router.include_router(traces_router)
 router.include_router(prompts_router)
 router.include_router(models_router)
+router.include_router(audio_router)
 router.include_router(debug_router)
 router.include_router(conversations_router)
 router.include_router(tasks_router)

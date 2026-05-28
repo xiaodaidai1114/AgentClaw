@@ -39,4 +39,22 @@ describe('public agent and dashboard UX safeguards', () => {
     expect(toolPanelSource).toContain('details-close')
     expect(toolPanelSource).toContain('aria-label')
   })
+
+  it('shows recent conversations on public shared agent pages without exposing admin panels', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain('<ChatSidebar')
+    expect(source).not.toContain('<ChatSidebar v-if="!isPublicMode"')
+    expect(source).toContain('<div v-if="!isPublicMode" class="info-panel"')
+  })
+
+  it('keeps public shared agent chat within the viewport', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain(":class=\"{ 'public-chat': isPublicMode }\"")
+    expect(source).toContain('.agent-chat.public-chat {')
+    expect(source).toContain('margin: 0;')
+    expect(source).toContain('width: 100%;')
+    expect(source).toContain('height: 100vh;')
+  })
 })

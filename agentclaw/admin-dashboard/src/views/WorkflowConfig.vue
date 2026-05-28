@@ -105,6 +105,38 @@
             <span class="field-hint">{{ t('workflowConfig.workflow.memoryCounter', { count: (workflowForm.memory_content || '').length, max: 40000 }) }}</span>
           </div>
         </div>
+        <div class="config-block">
+          <div class="block-title">{{ t('workflowConfig.chatAudio.title') }}</div>
+          <div class="field-grid cols-3">
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.enabled') }}</label>
+              <n-switch v-model:value="workflowForm.chat_audio.enabled" @update:value="workflowChanged = true" />
+              <span class="field-hint">{{ t('workflowConfig.chatAudio.enabledHint') }}</span>
+            </div>
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.speechInputEnabled') }}</label>
+              <n-switch v-model:value="workflowForm.chat_audio.speech_input_enabled" :disabled="!workflowForm.chat_audio.enabled" @update:value="workflowChanged = true" />
+              <span class="field-hint">{{ t('workflowConfig.chatAudio.speechInputHint') }}</span>
+            </div>
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.ttsEnabled') }}</label>
+              <n-switch v-model:value="workflowForm.chat_audio.tts_enabled" :disabled="!workflowForm.chat_audio.enabled" @update:value="workflowChanged = true" />
+              <span class="field-hint">{{ t('workflowConfig.chatAudio.ttsHint') }}</span>
+            </div>
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.speech2TextModel') }}</label>
+              <n-select v-model:value="workflowForm.chat_audio.speech2text_model_id" :options="speech2TextModelOptions" clearable filterable @update:value="workflowChanged = true" />
+            </div>
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.ttsModel') }}</label>
+              <n-select v-model:value="workflowForm.chat_audio.tts_model_id" :options="ttsModelOptions" clearable filterable @update:value="workflowChanged = true" />
+            </div>
+            <div class="form-field">
+              <label class="field-label">{{ t('workflowConfig.chatAudio.ttsVoice') }}</label>
+              <n-input v-model:value="workflowForm.chat_audio.tts_voice" :placeholder="t('workflowConfig.chatAudio.ttsVoicePlaceholder')" @input="workflowChanged = true" />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -257,7 +289,7 @@ const workflowId = computed(() => String(route.params.id || ''))
 const breadcrumbs = computed(() => [{ text: t('workflows.title'), to: '/workflows' }, { text: workflowId.value, to: `/workflows/${workflowId.value}` }, { text: t('common.configure') }])
 const activeTab = ref('nodes')
 const workflow = ref(null)
-const workflowForm = ref({})
+const workflowForm = ref({ chat_audio: normalizeChatAudio() })
 const workflowChanged = ref(false)
 const nodeList = ref([])
 const selectedNodeId = ref('')
@@ -266,6 +298,16 @@ const nodeForm = ref(null)
 const nodeChanged = ref(false)
 const availableModels = ref([])
 const modelOptions = computed(() => toConversationModelOptions(availableModels.value))
+const speech2TextModelOptions = computed(() =>
+  availableModels.value
+    .filter(model => String(model.model_type || model.type || '').toLowerCase() === 'speech2text')
+    .map(model => ({ label: model.name || model.id, value: model.id }))
+)
+const ttsModelOptions = computed(() =>
+  availableModels.value
+    .filter(model => String(model.model_type || model.type || '').toLowerCase() === 'tts')
+    .map(model => ({ label: model.name || model.id, value: model.id }))
+)
 const isBuiltinWorkflow = computed(() => workflowId.value === '__builtin__' || !!workflow.value?.is_builtin)
 const errorStrategyOptions = ['ABORT', 'RETRY', 'SKIP', 'FALLBACK'].map((value) => ({ label: value, value }))
 const toolChoiceOptions = ['auto', 'required', 'none'].map((value) => ({ label: value, value }))
@@ -277,6 +319,17 @@ const injectFilesOptions = [
   { label: t('workflowConfig.injectFiles.forceOn'), value: true },
   { label: t('workflowConfig.injectFiles.forceOff'), value: false },
 ]
+
+function normalizeChatAudio(config = {}) {
+  return {
+    enabled: !!config.enabled,
+    speech_input_enabled: !!config.speech_input_enabled,
+    tts_enabled: !!config.tts_enabled,
+    speech2text_model_id: config.speech2text_model_id || '',
+    tts_model_id: config.tts_model_id || '',
+    tts_voice: config.tts_voice || '',
+  }
+}
 
 const tips = {
   '超时 (秒)': t('workflowConfig.tips.timeout'),
@@ -361,13 +414,28 @@ async function fetchWorkflowConfig() {
     description: cfg.description || '',
     welcome: cfg.welcome || '',
     memory_content: cfg.memory_content || '',
+    chat_audio: normalizeChatAudio(cfg.chat_audio),
   }
   workflowChanged.value = false
 }
 
 async function fetchModels() {
-  const res = await modelsApi.getAvailable()
-  availableModels.value = res.models || []
+  const [available, configured] = await Promise.all([
+    modelsApi.getAvailable(),
+    settingsApi.getModelsConfig(),
+  ])
+  const byId = new Map()
+  for (const model of available.models || []) {
+    if (model?.id) byId.set(model.id, model)
+  }
+  for (const model of configured.models || []) {
+    if (!model?.id) continue
+    byId.set(model.id, {
+      ...model,
+      model_type: model.model_type || model.type || 'chat',
+    })
+  }
+  availableModels.value = [...byId.values()]
 }
 
 async function onNodeSelect(node) {
@@ -399,6 +467,7 @@ async function saveWorkflowConfig() {
     description: res.description || '',
     welcome: res.welcome || '',
     memory_content: res.memory_content || '',
+    chat_audio: normalizeChatAudio(res.chat_audio),
   }
   workflowChanged.value = false
   message.success(t('workflowConfig.messages.workflowSaved'))

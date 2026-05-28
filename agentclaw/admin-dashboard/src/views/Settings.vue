@@ -225,6 +225,15 @@
               <n-form-item :label="t('settings.modelConfig.visionModel')">
                 <n-select v-model:value="modelsConfigForm.vision" :options="visionModelSelectOptions" :placeholder="t('common.none')" clearable filterable class="form-input-wide" @update:value="markModelsConfigChanged" />
               </n-form-item>
+              <n-form-item :label="t('settings.modelConfig.speech2TextModel')">
+                <n-select v-model:value="modelsConfigForm.speech2text" :options="speech2TextModelSelectOptions" :placeholder="t('common.none')" clearable filterable class="form-input-wide" @update:value="markModelsConfigChanged" />
+              </n-form-item>
+              <n-form-item :label="t('settings.modelConfig.ttsModel')">
+                <n-select v-model:value="modelsConfigForm.tts" :options="ttsModelSelectOptions" :placeholder="t('common.none')" clearable filterable class="form-input-wide" @update:value="markModelsConfigChanged" />
+              </n-form-item>
+              <n-form-item :label="t('settings.modelConfig.ttsVoice')">
+                <n-input v-model:value="modelsConfigForm.tts_voice" :placeholder="t('settings.modelConfig.ttsVoicePlaceholder')" class="form-input-wide" @input="markModelsConfigChanged" />
+              </n-form-item>
             </n-form>
           </n-card>
 
@@ -243,7 +252,7 @@
               <div v-for="(model, index) in modelsConfigForm.models" :key="model._key || index" class="model-config-row">
                 <n-text strong class="model-config-cell">{{ model.id || t('settings.modelConfig.newModel') }}</n-text>
                 <n-text class="model-config-cell model-name-cell" depth="3">{{ model.model || '-' }}</n-text>
-                <n-tag size="small" :bordered="false">{{ model.channel || 'openai' }}</n-tag>
+                <n-tag size="small" :bordered="false">{{ modelChannelLabel(model) }}</n-tag>
                 <n-space :size="6">
                   <n-tag size="small" :bordered="false">{{ model.type || 'chat' }}</n-tag>
                   <n-tag v-if="model.supports_vision" type="info" size="small" :bordered="false">{{ t('settings.modelConfig.supportsVisionShort') }}</n-tag>
@@ -612,11 +621,11 @@
         <n-form-item :label="t('settings.modelConfig.modelId')">
           <n-input v-model:value="modelEditorForm.id" :placeholder="t('settings.modelConfig.modelIdPlaceholder')" />
         </n-form-item>
-        <n-form-item :label="t('settings.modelConfig.channel')">
-          <n-select v-model:value="modelEditorForm.channel" :options="modelChannelOptions" tag filterable />
+        <n-form-item v-if="modelChannelVisible" :label="t('settings.modelConfig.channel')">
+          <n-select v-model:value="modelEditorForm.channel" :options="currentModelChannelOptions" tag filterable />
         </n-form-item>
         <n-form-item :label="t('settings.modelConfig.type')">
-          <n-select v-model:value="modelEditorForm.type" :options="modelTypeOptions" />
+          <n-select v-model:value="modelEditorForm.type" :options="modelTypeOptions" @update:value="handleModelTypeChange" />
         </n-form-item>
         <n-form-item v-if="modelEditorForm.type === 'chat'" :label="t('settings.modelConfig.supportsVision')">
           <n-switch v-model:value="modelEditorForm.supports_vision" />
@@ -632,6 +641,15 @@
         </n-form-item>
         <n-form-item :label="t('settings.modelConfig.baseUrl')">
           <n-input v-model:value="modelEditorForm.base_url" :placeholder="t('settings.modelConfig.baseUrlPlaceholder')" />
+        </n-form-item>
+        <n-form-item v-if="modelEditorForm.type === 'tts'" :label="t('settings.modelConfig.voice')">
+          <n-input v-model:value="modelEditorForm.voice" :placeholder="t('settings.modelConfig.voicePlaceholder')" />
+        </n-form-item>
+        <n-form-item v-if="modelEditorForm.type === 'tts'" :label="t('settings.modelConfig.audioFormat')">
+          <n-input v-model:value="modelEditorForm.audio_format" :placeholder="t('settings.modelConfig.audioFormatPlaceholder')" />
+        </n-form-item>
+        <n-form-item v-if="modelEditorForm.type === 'speech2text'" :label="t('settings.modelConfig.supportedFileExtensions')">
+          <n-input v-model:value="modelEditorForm.supported_file_extensions" :placeholder="t('settings.modelConfig.supportedFileExtensionsPlaceholder')" />
         </n-form-item>
       </n-form>
       <template #action>
@@ -930,10 +948,32 @@ const MODEL_CONFIG_DEFAULTS = {
   fallback: '',
   fast: '',
   vision: '',
+  speech2text: '',
+  tts: '',
+  tts_voice: '',
   models: [],
 }
 const MODEL_SECRET_MASK = '***'
-const MODEL_REFERENCE_FIELDS = ['default', 'fallback', 'fast', 'vision']
+const MODEL_REFERENCE_FIELDS = ['default', 'fallback', 'fast', 'vision', 'speech2text', 'tts']
+const MODEL_TYPES_WITHOUT_CHANNEL = new Set(['embedding', 'rerank'])
+const CHAT_MODEL_CHANNEL_OPTIONS = [
+  { label: 'openai', value: 'openai' },
+  { label: 'anthropic', value: 'anthropic' },
+  { label: 'azure', value: 'azure' },
+  { label: 'codex', value: 'codex' },
+  { label: 'custom', value: 'custom' },
+]
+const AUDIO_MODEL_CHANNEL_OPTIONS = [
+  { label: 'openai', value: 'openai' },
+  { label: 'custom', value: 'custom' },
+]
+const modelTypeOptions = [
+  { label: 'chat', value: 'chat' },
+  { label: 'embedding', value: 'embedding' },
+  { label: 'rerank', value: 'rerank' },
+  { label: 'speech2text', value: 'speech2text' },
+  { label: 'tts', value: 'tts' },
+]
 let nextModelKey = 1
 const modelsConfigPath = ref('')
 const modelsConfigLoading = ref(false)
@@ -950,7 +990,7 @@ const modelEditorTitle = computed(() =>
 )
 
 function isConversationModel(model = {}) {
-  return model.type !== 'embedding' && model.type !== 'rerank'
+  return !['embedding', 'rerank', 'speech2text', 'tts'].includes(model.type)
 }
 
 const modelSelectOptions = computed(() =>
@@ -971,36 +1011,96 @@ const visionModelSelectOptions = computed(() =>
     }))
 )
 
-const modelChannelOptions = [
-  { label: 'openai', value: 'openai' },
-  { label: 'anthropic', value: 'anthropic' },
-  { label: 'azure', value: 'azure' },
-  { label: 'codex', value: 'codex' },
-  { label: 'custom', value: 'custom' },
-]
+const speech2TextModelSelectOptions = computed(() =>
+  modelsConfigForm.value.models
+    .filter(model => model.id && model.type === 'speech2text')
+    .map(model => ({
+      label: `${model.id}${model.model ? ` (${model.model})` : ''}`,
+      value: model.id,
+    }))
+)
 
-const modelTypeOptions = [
-  { label: 'chat', value: 'chat' },
-  { label: 'embedding', value: 'embedding' },
-  { label: 'rerank', value: 'rerank' },
-]
+const ttsModelSelectOptions = computed(() =>
+  modelsConfigForm.value.models
+    .filter(model => model.id && model.type === 'tts')
+    .map(model => ({
+      label: `${model.id}${model.model ? ` (${model.model})` : ''}`,
+      value: model.id,
+    }))
+)
+
+function normalizeModelType(type) {
+  const rawType = type || 'chat'
+  return rawType === 'vision' ? 'chat' : rawType
+}
+
+function modelChannelLabel(model = {}) {
+  return MODEL_TYPES_WITHOUT_CHANNEL.has(normalizeModelType(model.type)) ? '-' : (model.channel || 'openai')
+}
+
+function modelChannelOptionsForType(type) {
+  if (MODEL_TYPES_WITHOUT_CHANNEL.has(type)) return []
+  if (['speech2text', 'tts'].includes(type)) return AUDIO_MODEL_CHANNEL_OPTIONS
+  return CHAT_MODEL_CHANNEL_OPTIONS
+}
+
+const modelChannelVisible = computed(() =>
+  !MODEL_TYPES_WITHOUT_CHANNEL.has(normalizeModelType(modelEditorForm.value.type))
+)
+const currentModelChannelOptions = computed(() =>
+  modelChannelOptionsForType(normalizeModelType(modelEditorForm.value.type))
+)
+
+function normalizeModelEditorForType() {
+  const type = normalizeModelType(modelEditorForm.value.type)
+  const previousChannel = modelEditorForm.value.channel || ''
+  modelEditorForm.value.type = type
+  modelEditorForm.value.supports_vision = type === 'chat' && !!modelEditorForm.value.supports_vision
+  if (MODEL_TYPES_WITHOUT_CHANNEL.has(type)) {
+    modelEditorForm.value.channel = ''
+    return
+  }
+  const optionValues = modelChannelOptionsForType(type).map(item => item.value)
+  const chatOptionValues = CHAT_MODEL_CHANNEL_OPTIONS.map(item => item.value)
+  if (!previousChannel || (['speech2text', 'tts'].includes(type) && chatOptionValues.includes(previousChannel) && !optionValues.includes(previousChannel))) {
+    modelEditorForm.value.channel = 'openai'
+  }
+}
+
+function handleModelTypeChange() {
+  normalizeModelEditorForType()
+}
 
 function cloneModelConfig(model = {}) {
   const rawType = model.type || model.model_type || 'chat'
   const legacyVision = rawType === 'vision'
+  const type = normalizeModelType(rawType)
+  const extraFields = Object.fromEntries(
+    Object.entries(model).filter(([key]) => ![
+      '_key',
+      'model_type',
+      'api_key',
+      'supported_file_extensions',
+      'voice',
+      'audio_format',
+    ].includes(key))
+  )
   return {
     _key: nextModelKey++,
+    ...extraFields,
     id: model.id || '',
-    channel: model.channel || 'openai',
-    type: legacyVision ? 'chat' : rawType,
-    supports_vision: !!(model.supports_vision || legacyVision),
+    channel: MODEL_TYPES_WITHOUT_CHANNEL.has(type) ? '' : (model.channel || 'openai'),
+    type,
+    supports_vision: type === 'chat' && !!(model.supports_vision || legacyVision),
     model: model.model || '',
     api_key: model.api_key === MODEL_SECRET_MASK ? '' : (model.api_key || ''),
     api_key_set: !!model.api_key_set,
     base_url: model.base_url || '',
-    ...Object.fromEntries(
-      Object.entries(model).filter(([key]) => !['_key', 'model_type', 'api_key'].includes(key))
-    ),
+    voice: model.voice || '',
+    audio_format: model.audio_format || '',
+    supported_file_extensions: Array.isArray(model.supported_file_extensions)
+      ? model.supported_file_extensions.join(',')
+      : (model.supported_file_extensions || ''),
   }
 }
 
@@ -1010,6 +1110,9 @@ function normalizeModelsConfig(config = {}) {
     fallback: config.fallback || '',
     fast: config.fast || '',
     vision: config.vision || '',
+    speech2text: config.speech2text || '',
+    tts: config.tts || '',
+    tts_voice: config.tts_voice || '',
     models: (config.models || []).map(cloneModelConfig),
   }
 }
@@ -1019,10 +1122,17 @@ function serializeModelConfig(model = {}) {
   for (const [key, value] of Object.entries(model)) {
     if (key === '_key' || key === 'api_key_set') continue
     if (value === null || value === undefined || value === '') continue
+    if (key === 'supported_file_extensions' && typeof value === 'string') {
+      payload[key] = value.split(',').map(item => item.trim()).filter(Boolean)
+      continue
+    }
     payload[key] = value
   }
   if (!payload.api_key && model.api_key_set) {
     payload.api_key = MODEL_SECRET_MASK
+  }
+  if (MODEL_TYPES_WITHOUT_CHANNEL.has(payload.type)) {
+    delete payload.channel
   }
   return payload
 }
@@ -1033,6 +1143,9 @@ function serializeModelsConfig() {
     fallback: modelsConfigForm.value.fallback || '',
     fast: modelsConfigForm.value.fast || '',
     vision: modelsConfigForm.value.vision || '',
+    speech2text: modelsConfigForm.value.speech2text || '',
+    tts: modelsConfigForm.value.tts || '',
+    tts_voice: modelsConfigForm.value.tts_voice || '',
     models: modelsConfigForm.value.models.map(serializeModelConfig),
   }
 }
@@ -1086,6 +1199,7 @@ function openModelEditor(index = -1) {
 }
 
 function saveModelEditor() {
+  normalizeModelEditorForType()
   const modelId = String(modelEditorForm.value.id || '').trim()
   const modelName = String(modelEditorForm.value.model || '').trim()
   if (!modelId) {

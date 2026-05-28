@@ -20,4 +20,5 @@ def test_security_headers_are_added_to_api_responses():
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+    assert "microphone=(self)" in response.headers["permissions-policy"]
     assert "geolocation=()" in response.headers["permissions-policy"]

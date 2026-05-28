@@ -44,6 +44,16 @@
             <button v-if="uploadAvailable" class="toolbar-icon-btn" :title="$t('chatInput.addAttachment')" @click="$emit('attach')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
             </button>
+            <button
+              v-if="speechInputAvailable"
+              class="toolbar-icon-btn speech-input"
+              :class="{ recording }"
+              :title="recording ? $t('chatInput.stopSpeechInput') : $t('chatInput.startSpeechInput')"
+              :disabled="!enabled || isStreaming"
+              @click="$emit('speech-input')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="17" height="17"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><path d="M12 19v3"/><path d="M8 22h8"/></svg>
+            </button>
             <button class="toolbar-icon-btn danger-hover" :title="$t('chatInput.clearConversation')" @click="$emit('clear')">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
             </button>
@@ -86,12 +96,14 @@ export default {
     contextUsed: { type: Number, default: 0 },
     contextLimit: { type: Number, default: 128000 },
     uploadAvailable: { type: Boolean, default: false },
+    speechInputAvailable: { type: Boolean, default: false },
+    recording: { type: Boolean, default: false },
     attachedFiles: { type: Array, default: () => [] },
     inputError: { type: String, default: '' },
     canCompressContext: { type: Boolean, default: false },
     inputModes: { type: Array, default: null },
   },
-  emits: ['update:modelValue', 'send', 'action', 'attach', 'clear', 'remove-file', 'drop-files', 'compress-context'],
+  emits: ['update:modelValue', 'send', 'action', 'attach', 'speech-input', 'clear', 'remove-file', 'drop-files', 'compress-context'],
   data() {
     return { inputFocused: false, isDragging: false }
   },
@@ -288,6 +300,7 @@ export default {
 }
 .toolbar-icon-btn:hover { background: var(--bg-hover, #f1f1f1); color: var(--text-main, #18181b); }
 .toolbar-icon-btn.danger-hover:hover { background: #fee2e2; color: var(--danger-main, #ef4444); }
+.toolbar-icon-btn.speech-input.recording { background: #fee2e2; color: #dc2626; }
 
 .context-meter {
   min-width: 168px;

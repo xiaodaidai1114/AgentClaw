@@ -40,6 +40,25 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_csv(name: str) -> Optional[List[str]]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    values = [part.strip() for part in raw.split(",") if part.strip()]
+    return values or None
+
+
 # ============================================================
 # 任务管理器 - 跟踪运行中的工作流任务
 # ============================================================
@@ -189,9 +208,13 @@ class AgentClawServer:
         self.workers = workers
         self.reload = reload
         
-        # enable_admin 统一控制 Admin API + Dashboard 前端
-        self.enable_admin = enable_admin
+        # enable_admin 统一控制 Admin API + Dashboard 前端；环境变量只在显式配置时覆盖，默认保持本地开发行为。
+        self.enable_admin = enable_admin and _env_bool("AGENTCLAW_ENABLE_ADMIN_API", True)
         self.admin_prefix = admin_prefix
+        self.enable_mcp_routes = _env_bool("AGENTCLAW_ENABLE_MCP_ROUTES", True)
+        self.enable_scheduler_api = _env_bool("AGENTCLAW_ENABLE_SCHEDULER_API", True)
+        self.enable_channel_routes = _env_bool("AGENTCLAW_ENABLE_CHANNEL_ROUTES", True)
+        self.enable_api_docs = _env_bool("AGENTCLAW_ENABLE_API_DOCS", True)
         
         # MCP 工具导出
         self.export_mcp_tools = export_mcp_tools or os.getenv("EXPORT_MCP_TOOLS", "").lower() in ("true", "1", "yes")
@@ -212,15 +235,17 @@ class AgentClawServer:
         if not self._is_redis_configured():
             logger.warning("⚠️ Redis 未配置，Prompt 热更新、多实例同步、分布式锁和缓存能力将不可用")
         
-        # Dashboard 前端配置（跟随 enable_admin）
-        self.enable_admin_dashboard = self.enable_admin
+        # Dashboard 前端配置（默认跟随 enable_admin，生产可用环境变量单独收紧）
+        self.enable_admin_dashboard = _env_bool("AGENTCLAW_ENABLE_DASHBOARD", enable_admin)
+        self.dashboard_mode = os.getenv("AGENTCLAW_DASHBOARD_MODE", "full").strip().lower() or "full"
         self.admin_dashboard_port = admin_dashboard_port if admin_dashboard_port is not None else int(os.getenv("ADMIN_DASHBOARD_PORT", "5173"))
         
         # 自动查找 admin-dashboard 目录（在 agentclaw 包内）
         self.admin_dashboard_dir = self._find_admin_dashboard_dir()
         self._dashboard_process = None
         
-        self.cors_origins = cors_origins or ["*"]
+        self.cors_origins = cors_origins or _env_csv("AGENTCLAW_CORS_ORIGINS") or ["*"]
+        self.cors_allow_credentials = _env_bool("AGENTCLAW_CORS_ALLOW_CREDENTIALS", True)
         
         # 认证配置
         self._setup_auth(auth, api_keys)
@@ -715,12 +740,19 @@ class AgentClawServer:
             title="AgentClaw API",
             description="AgentClaw workflow execution and management API",
             version=get_version(),
+            docs_url="/docs" if self.enable_api_docs else None,
+            redoc_url="/redoc" if self.enable_api_docs else None,
+            openapi_url="/openapi.json" if self.enable_api_docs else None,
         )
         from agentclaw.api.upload_limits import (
             DEFAULT_REQUEST_BODY_LIMIT_BYTES,
             MULTIPART_OVERHEAD_ALLOWANCE_BYTES,
             RequestBodyLimitMiddleware,
             UploadSizeLimitMiddleware,
+        )
+        from agentclaw.api.routers.public.audio import (
+            _public_max_audio_bytes,
+            public_speech_to_text_path_prefix,
         )
         from agentclaw.api.security_headers import SecurityHeadersMiddleware
         from agentclaw.config import get_config
@@ -741,6 +773,7 @@ class AgentClawServer:
             max_size=request_body_limit,
             path_prefixes=("/",),
             excluded_path_prefixes=("/api/upload", "/admin/knowledgebases"),
+            path_limits={public_speech_to_text_path_prefix(): _public_max_audio_bytes()},
         )
         app.add_middleware(
             UploadSizeLimitMiddleware,
@@ -976,7 +1009,7 @@ class AgentClawServer:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=self.cors_origins,
-            allow_credentials=True,
+            allow_credentials=self.cors_allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -991,19 +1024,21 @@ class AgentClawServer:
         app.include_router(public_router)
 
         # Scheduler API routes
-        try:
-            from agentclaw.scheduler.api import router as scheduler_router
-            app.include_router(scheduler_router, prefix="/api")
-        except ImportError:
-            pass
+        if self.enable_scheduler_api:
+            try:
+                from agentclaw.scheduler.api import router as scheduler_router
+                app.include_router(scheduler_router, prefix="/api")
+            except ImportError:
+                pass
         
         # Channel routes (飞书/钉钉/企业微信/QQ/微信)
-        try:
-            from agentclaw.channels.routes import router as channels_router, set_channel_manager
-            app.include_router(channels_router, prefix="/api")
-            # Channel 初始化在 startup 事件中完成
-        except ImportError:
-            pass
+        if self.enable_channel_routes:
+            try:
+                from agentclaw.channels.routes import router as channels_router, set_channel_manager
+                app.include_router(channels_router, prefix="/api")
+                # Channel 初始化在 startup 事件中完成
+            except ImportError:
+                pass
 
         # Log Workflow API Key
         from agentclaw.api.auth.token import WorkflowAPIKeyManager
@@ -1012,7 +1047,8 @@ class AgentClawServer:
         logger.info(f"Workflow API Key: {mask_secret(workflow_api_key_manager.api_key)}")
         
         # MCP Server routes
-        self._register_mcp_routes(app)
+        if self.enable_mcp_routes:
+            self._register_mcp_routes(app)
         
         # Admin API
         if self.enable_admin:
@@ -1525,6 +1561,14 @@ class AgentClawServer:
         @app.get("/dashboard/{path:path}")
         async def serve_dashboard(path: str = ""):
             """服务 Admin Dashboard SPA"""
+            if self.dashboard_mode == "public-chat":
+                normalized = path.strip("/")
+                public_chat_path = (
+                    normalized.startswith("workflows/")
+                    and normalized.endswith("/chat")
+                )
+                if normalized and not public_chat_path:
+                    return JSONResponse(status_code=404, content={"error": "Not found"})
             index_file = dist_path / "index.html"
             if index_file.exists():
                 return FileResponse(

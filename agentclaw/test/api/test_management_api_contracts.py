@@ -12,6 +12,13 @@ from agentclaw.test.conftest import auth_header
 pytestmark = pytest.mark.api
 
 
+@pytest.fixture(autouse=True)
+def _reset_public_session_state():
+    from agentclaw.api.routers.public.session import reset_public_user_state
+
+    reset_public_user_state()
+
+
 def _public_page_headers() -> dict[str, str]:
     return {
         "origin": "http://testserver",
@@ -375,7 +382,22 @@ def test_public_conversation_routes_force_public_source_for_full_lifecycle(
 
     class FakeConversationService:
         async def list_conversations(self, **kwargs):
-            raise AssertionError("anonymous public list must not enumerate stored conversations")
+            calls.append(("list", kwargs))
+            return {
+                "conversations": [
+                    {
+                        "id": "conv-1",
+                        "workflow_id": kwargs["workflow_id"],
+                        "title": "public",
+                        "messages": messages,
+                        "source": "public",
+                        "owner_id": kwargs["owner_id"],
+                    }
+                ],
+                "total": 1,
+                "page": kwargs["page"],
+                "page_size": kwargs["page_size"],
+            }
 
         async def create_conversation(self, **kwargs):
             calls.append(("create", kwargs))
@@ -389,6 +411,7 @@ def test_public_conversation_routes_force_public_source_for_full_lifecycle(
                 "title": "public",
                 "messages": messages,
                 "source": "public",
+                "owner_id": kwargs["owner_id"],
             }
 
         async def update_conversation(self, **kwargs):
@@ -448,11 +471,12 @@ def test_public_conversation_routes_force_public_source_for_full_lifecycle(
 
     assert created.status_code == 200
     assert created.json()["source"] == "public"
-    assert created.json()["owner_id"] is None
+    assert created.json()["owner_id"]
     assert created.json()["user_id"] is None
     assert created.json()["tenant_id"] is None
     assert listed.status_code == 200
-    assert listed.json() == {"conversations": [], "total": 0, "page": 1, "page_size": 50}
+    assert listed.json()["total"] == 1
+    assert listed.json()["conversations"][0]["owner_id"] == created.json()["owner_id"]
     assert detail.status_code == 200
     assert updated.status_code == 200
     assert updated.json()["source"] == "public"
@@ -462,18 +486,24 @@ def test_public_conversation_routes_force_public_source_for_full_lifecycle(
     assert deleted.status_code == 200
 
     create_call = next(call for call in calls if call[0] == "create")
+    list_call = next(call for call in calls if call[0] == "list")
     update_call = next(call for call in calls if call[0] == "update")
     delete_call = next(call for call in calls if call[0] == "delete")
     get_calls = [call for call in calls if call[0] == "get"]
 
     assert create_call[1]["source"] == "public"
-    assert create_call[1]["owner_id"] is None
+    assert create_call[1]["owner_id"]
     assert create_call[1]["user_id"] is None
     assert create_call[1]["tenant_id"] is None
+    assert list_call[1]["source"] == "public"
+    assert list_call[1]["owner_id"] == create_call[1]["owner_id"]
     assert update_call[1]["source"] == "public"
+    assert update_call[1]["owner_id"] == create_call[1]["owner_id"]
     assert delete_call[3]["source"] == "public"
+    assert delete_call[3]["owner_id"] == create_call[1]["owner_id"]
     assert get_calls
     assert all(call[3]["source"] == "public" for call in get_calls)
+    assert all(call[3]["owner_id"] == create_call[1]["owner_id"] for call in get_calls)
 
 
 def test_public_conversation_routes_require_published_workflow_and_share_token(
@@ -555,6 +585,9 @@ def test_public_conversation_routes_apply_rate_limit(public_api_client, monkeypa
     public_access.reset_public_rate_limiter()
 
     class FakeConversationService:
+        async def list_conversations(self, **kwargs):
+            return {"conversations": [], "total": 0, "page": kwargs["page"], "page_size": kwargs["page_size"]}
+
         async def create_conversation(self, **kwargs):
             return {"id": "conv-1", "messages": [], **kwargs}
 

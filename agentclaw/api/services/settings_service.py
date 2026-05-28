@@ -23,6 +23,7 @@ WORKFLOW_FIELDS = (
     "tracing",
     "description",
     "welcome",
+    "chat_audio",
     "public_share_enabled",
     "public_share_token",
     "workflow_api_key",
@@ -42,8 +43,29 @@ INFRA_FIELDS = {
     "scheduler": ("enabled", "timezone", "max_workers", "coalesce", "max_instances"),
 }
 SECRET_MASKS = {"password", "admin_token", "workflow_api_key", "mcp_token", "minio_access_key", "minio_secret_key"}
-FALSEABLE_OVERRIDE_FIELDS = {"inject_as_agentic_capability", "public_share_enabled"}
-NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank"}
+MODEL_REFERENCE_FIELDS = ("default", "fallback", "fast", "vision", "speech2text", "tts", "tts_voice")
+DEFAULT_CHAT_AUDIO_CONFIG = {
+    "enabled": False,
+    "speech_input_enabled": False,
+    "tts_enabled": False,
+    "speech2text_model_id": "",
+    "tts_model_id": "",
+    "tts_voice": "",
+}
+BUILTIN_CHAT_AUDIO_CONFIG = {
+    **DEFAULT_CHAT_AUDIO_CONFIG,
+    "enabled": True,
+    "speech_input_enabled": True,
+    "tts_enabled": True,
+}
+FALSEABLE_OVERRIDE_FIELDS = {
+    "inject_as_agentic_capability",
+    "public_share_enabled",
+    "enabled",
+    "speech_input_enabled",
+    "tts_enabled",
+}
+NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank", "speech2text", "tts"}
 MODEL_PARAM_FIELDS = ("temperature", "max_tokens", "top_p")
 NODE_RESET_FIELDS = set(BASE_NODE_FIELDS) | set(LLM_FIELDS) | set(HUMAN_FIELDS) | {"on_error"} | set(MODEL_PARAM_FIELDS)
 GLOBAL_ENV_FIELDS = {
@@ -536,7 +558,7 @@ def _models_config_path(config: Any) -> Path:
 def _load_models_config(path: Path) -> dict[str, Any]:
     payload = _load_json(path)
     if not payload:
-        return {"default": "", "fallback": "", "fast": "", "vision": "", "models": []}
+        return {**{field: "" for field in MODEL_REFERENCE_FIELDS}, "models": []}
     models = payload.get("models", [])
     if isinstance(models, dict):
         models = [
@@ -547,13 +569,13 @@ def _load_models_config(path: Path) -> dict[str, Any]:
         models = []
     payload = dict(payload)
     payload["models"] = [dict(item) for item in models if isinstance(item, dict)]
-    for field in ("default", "fallback", "fast", "vision"):
+    for field in MODEL_REFERENCE_FIELDS:
         payload.setdefault(field, "")
     return payload
 
 
 def _mask_models_config(payload: dict[str, Any], path: Path) -> dict[str, Any]:
-    result = {key: payload.get(key, "") for key in ("default", "fallback", "fast", "vision")}
+    result = {key: payload.get(key, "") for key in MODEL_REFERENCE_FIELDS}
     result["path"] = str(path)
     result["models"] = []
     for item in payload.get("models", []):
@@ -596,9 +618,9 @@ def _sanitize_models_config(data: dict[str, Any], existing: dict[str, Any]) -> d
     payload = {
         key: value
         for key, value in existing.items()
-        if key not in {"default", "fallback", "fast", "vision", "models", "path", "hot_reloaded"}
+        if key not in {*MODEL_REFERENCE_FIELDS, "models", "path", "hot_reloaded"}
     }
-    for field in ("default", "fallback", "fast", "vision"):
+    for field in MODEL_REFERENCE_FIELDS:
         value = data.get(field, "")
         if value is not None:
             payload[field] = str(value).strip()
@@ -632,10 +654,16 @@ def _sanitize_models_config(data: dict[str, Any], existing: dict[str, Any]) -> d
     for field in ("default", "fallback", "fast"):
         model_id = str(payload.get(field) or "")
         if model_id and model_types.get(model_id) in NON_CONVERSATION_MODEL_TYPES:
-            raise ValueError(f"{field} model cannot use embedding or rerank model '{model_id}'")
+            raise ValueError(f"{field} model cannot use non-conversation model '{model_id}'")
     vision_id = str(payload.get("vision") or "")
     if vision_id and vision_id in model_vision and not model_vision[vision_id]:
         raise ValueError(f"vision model must select a chat model with supports_vision enabled: '{vision_id}'")
+    speech2text_id = str(payload.get("speech2text") or "")
+    if speech2text_id and model_types.get(speech2text_id) != "speech2text":
+        raise ValueError(f"speech2text model must select a speech2text model: '{speech2text_id}'")
+    tts_id = str(payload.get("tts") or "")
+    if tts_id and model_types.get(tts_id) != "tts":
+        raise ValueError(f"tts model must select a tts model: '{tts_id}'")
     return payload
 
 
@@ -677,6 +705,19 @@ def _pick(obj: Any, fields: tuple[str, ...]) -> dict[str, Any]:
     return {field: getattr(obj, field, None) for field in fields}
 
 
+def _normalize_chat_audio(value: Any) -> dict[str, Any]:
+    config = dict(DEFAULT_CHAT_AUDIO_CONFIG)
+    if isinstance(value, dict):
+        for key in config:
+            if key in value:
+                config[key] = value[key]
+    for key in ("enabled", "speech_input_enabled", "tts_enabled"):
+        config[key] = bool(config.get(key))
+    for key in ("speech2text_model_id", "tts_model_id", "tts_voice"):
+        config[key] = str(config.get(key) or "")
+    return config
+
+
 def _node_kind(node: Any) -> str:
     name = type(node).__name__.lower()
     if "llm" in name:
@@ -691,6 +732,9 @@ def _workflow_base(workflow: Any) -> dict[str, Any]:
     base.setdefault("allowed_roles", None)
     base.setdefault("description", "")
     base.setdefault("welcome", "")
+    base["chat_audio"] = _normalize_chat_audio(base.get("chat_audio"))
+    if _is_builtin_workflow(workflow) and not getattr(workflow, "_chat_audio_explicit", False):
+        base["chat_audio"] = dict(BUILTIN_CHAT_AUDIO_CONFIG)
     base.setdefault("rate_limit", "")
     base["allowed_roles"] = ", ".join(base["allowed_roles"] or [])
     base["description"] = base["description"] or ""
@@ -1015,6 +1059,8 @@ class SettingsService:
                 workflow_id,
                 str(data.pop("memory_content") or ""),
             )
+        if "chat_audio" in data:
+            data["chat_audio"] = _normalize_chat_audio(data.get("chat_audio"))
         if "allowed_roles" in data and isinstance(data["allowed_roles"], str):
             data["allowed_roles"] = [item.strip() for item in data["allowed_roles"].split(",") if item.strip()]
         if _is_builtin_workflow(workflow, workflow_id):

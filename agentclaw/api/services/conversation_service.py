@@ -134,6 +134,7 @@ class ConversationService:
         self,
         workflow_id: str,
         source: str = "admin",
+        owner_id: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Dict[str, Any]:
@@ -143,24 +144,29 @@ class ConversationService:
 
         await self._ensure_table()
         offset = (page - 1) * page_size
+        where = "workflow_id = $1 AND COALESCE(source, 'admin') = $2"
+        params: list[Any] = [workflow_id, source]
+        if owner_id is not None:
+            where += " AND owner_id = $3"
+            params.append(owner_id)
 
         try:
-            total_row = await pool.fetchrow("""
+            total_row = await pool.fetchrow(f"""
                 SELECT COUNT(*) as cnt FROM agent_conversations
-                WHERE workflow_id = $1 AND COALESCE(source, 'admin') = $2
-            """, workflow_id, source)
+                WHERE {where}
+            """, *params)
             total = total_row["cnt"] if total_row else 0
 
-            rows = await pool.fetch("""
+            rows = await pool.fetch(f"""
                 SELECT id, workflow_id, title, messages,
                        COALESCE(source, 'admin') as source,
                        owner_id, user_id, tenant_id,
                        created_at, updated_at
                 FROM agent_conversations
-                WHERE workflow_id = $1 AND COALESCE(source, 'admin') = $2
+                WHERE {where}
                 ORDER BY updated_at DESC
-                LIMIT $3 OFFSET $4
-            """, workflow_id, source, page_size, offset)
+                LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """, *params, page_size, offset)
 
             return {
                 "conversations": [self._parse_row(r) for r in rows],
@@ -182,7 +188,7 @@ class ConversationService:
         tenant_id: Optional[str] = None,
     ) -> dict:
         pool = await self._get_pool()
-        conv_id = f"conv_{uuid.uuid4().hex[:12]}"
+        conv_id = f"conv_{uuid.uuid4().hex[:24]}"
         now = int(datetime.now().timestamp() * 1000)
 
         conv = {
@@ -221,6 +227,7 @@ class ConversationService:
         workflow_id: str,
         conversation_id: str,
         source: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Optional[dict]:
         pool = await self._get_pool()
         if not pool:
@@ -231,6 +238,9 @@ class ConversationService:
         if source is not None:
             where += " AND COALESCE(source, 'admin') = $3"
             params.append(source)
+        if owner_id is not None:
+            where += f" AND owner_id = ${len(params) + 1}"
+            params.append(owner_id)
 
         try:
             row = await pool.fetchrow(f"""
@@ -256,6 +266,7 @@ class ConversationService:
         title: Optional[str] = None,
         messages: Optional[list] = None,
         source: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Optional[dict]:
         pool = await self._get_pool()
         if not pool:
@@ -286,6 +297,10 @@ class ConversationService:
             where += f" AND COALESCE(source, 'admin') = ${param_idx}"
             params.append(source)
             param_idx += 1
+        if owner_id is not None:
+            where += f" AND owner_id = ${param_idx}"
+            params.append(owner_id)
+            param_idx += 1
 
         sql = f"""
             UPDATE agent_conversations
@@ -311,6 +326,7 @@ class ConversationService:
         workflow_id: str,
         conversation_id: str,
         source: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> bool:
         pool = await self._get_pool()
         if not pool:
@@ -321,6 +337,9 @@ class ConversationService:
         if source is not None:
             where += " AND COALESCE(source, 'admin') = $3"
             params.append(source)
+        if owner_id is not None:
+            where += f" AND owner_id = ${len(params) + 1}"
+            params.append(owner_id)
 
         try:
             status = await pool.execute(f"""

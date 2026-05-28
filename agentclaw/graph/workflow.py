@@ -46,6 +46,21 @@ logger = get_logger(__name__)
 # 避免多个 Workflow 对同一配置文件分别创建 MCPToolKit 导致重复启动 MCP Server 子进程
 _mcp_toolkit_cache: dict = {}  # resolved_path_str -> MCPToolKit
 LANGGRAPH_UNLIMITED_RECURSION_LIMIT = 1_000_000
+DEFAULT_CHAT_AUDIO_CONFIG = {
+    "enabled": False,
+    "speech_input_enabled": False,
+    "tts_enabled": False,
+    "speech2text_model_id": "",
+    "tts_model_id": "",
+    "tts_voice": "",
+}
+
+BUILTIN_CHAT_AUDIO_CONFIG = {
+    **DEFAULT_CHAT_AUDIO_CONFIG,
+    "enabled": True,
+    "speech_input_enabled": True,
+    "tts_enabled": True,
+}
 
 
 def _get_mcp_connect_timeout() -> float:
@@ -136,6 +151,7 @@ class Workflow:
         publish_as_mcp: bool = False,  # 是否发布为 MCP Server（默认不发布）
         mcp_server: Optional[str] = None,  # MCP 聚合名称，多个工作流可聚合到同一端点
         welcome: Optional[str] = None,  # 前端开场白（新对话时显示，不影响 API 调用）
+        chat_audio: Optional[dict] = None,  # 聊天页语音输入/TTS 配置
         skills_dir: Optional[str] = None,  # Skills 目录路径，None 表示自动查找 ./skills/
     ):
         self.id = id
@@ -144,6 +160,8 @@ class Workflow:
         self.description = description
         self.desc = desc  # MCP 工具描述
         self.welcome = welcome  # 前端开场白
+        self._chat_audio_explicit = chat_audio is not None
+        self.chat_audio = self._normalize_chat_audio(chat_audio)
         self._skills_dir = skills_dir  # Skills 目录路径
         
         self.timeout = timeout
@@ -201,6 +219,19 @@ class Workflow:
         self._prompts_registered = False  # 节点提示词是否已注册到 PromptManager
 
         logger.info(f"创建工作流: {id} ({name} v{version})")
+
+    @staticmethod
+    def _normalize_chat_audio(chat_audio: Optional[dict]) -> dict:
+        config = dict(DEFAULT_CHAT_AUDIO_CONFIG)
+        if isinstance(chat_audio, dict):
+            for key in config:
+                if key in chat_audio:
+                    config[key] = chat_audio[key]
+        for key in ("enabled", "speech_input_enabled", "tts_enabled"):
+            config[key] = bool(config.get(key))
+        for key in ("speech2text_model_id", "tts_model_id", "tts_voice"):
+            config[key] = str(config.get(key) or "")
+        return config
 
     @staticmethod
     def _is_framework_internal_file(path: Path) -> bool:
@@ -3027,11 +3058,15 @@ class Workflow:
                     })
         
         is_builtin_workflow = self.id == "__builtin__" or bool(getattr(self, "is_builtin", False))
+        chat_audio = self._normalize_chat_audio(getattr(self, "chat_audio", None))
+        if is_builtin_workflow and not getattr(self, "_chat_audio_explicit", False):
+            chat_audio = dict(BUILTIN_CHAT_AUDIO_CONFIG)
         result = {
             "id": self.id,
             "name": self.name,
             "version": self.version,
             "description": self.description,
+            "chat_audio": chat_audio,
             "public_share_enabled": False if is_builtin_workflow else bool(getattr(self, "public_share_enabled", False)),
             "public_share_token": "" if is_builtin_workflow else (getattr(self, "public_share_token", "") or ""),
             "rate_limit": getattr(self, "rate_limit", "") or "",

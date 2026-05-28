@@ -56,6 +56,7 @@ class WorkflowInfo(BaseModel):
     name: str
     version: str
     description: Optional[str] = None
+    chat_audio: Dict[str, Any] = {}
     node_count: int = 0
     is_builtin: bool = False
     agent_square_app_id: Optional[str] = None
@@ -79,6 +80,7 @@ class WorkflowStructure(BaseModel):
     name: str
     version: str
     description: Optional[str] = None
+    chat_audio: Dict[str, Any] = {}
     like_count: int = 0
     dislike_count: int = 0
     nodes: List[WorkflowNode]

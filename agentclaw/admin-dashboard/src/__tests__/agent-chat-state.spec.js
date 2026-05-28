@@ -563,6 +563,36 @@ describe('AgentChat conversation runtime state', () => {
     expect(AgentChat.computed.canStartWorkflow.call(reportCtx)).toBe(false)
   })
 
+  it('enables public speech input and TTS from public workflow metadata', () => {
+    const ctx = {
+      isPublicMode: true,
+      chatAudio: {
+        enabled: true,
+        speech_input_enabled: true,
+        tts_enabled: true,
+      },
+    }
+    ctx.normalizedChatAudio = AgentChat.computed.normalizedChatAudio.call(ctx)
+
+    expect(AgentChat.computed.speechInputAvailable.call(ctx)).toBe(true)
+    expect(AgentChat.computed.ttsAvailable.call(ctx)).toBe(true)
+  })
+
+  it('keeps public speech input disabled when public workflow metadata disables it', () => {
+    const ctx = {
+      isPublicMode: true,
+      chatAudio: {
+        enabled: true,
+        speech_input_enabled: false,
+        tts_enabled: true,
+      },
+    }
+    ctx.normalizedChatAudio = AgentChat.computed.normalizedChatAudio.call(ctx)
+
+    expect(AgentChat.computed.speechInputAvailable.call(ctx)).toBe(false)
+    expect(AgentChat.computed.ttsAvailable.call(ctx)).toBe(true)
+  })
+
   it('validates chat input before sending', async () => {
     const ctx = {
       inputText: '<script>alert(1)</script>',
@@ -622,6 +652,12 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.messages).toBe(messages)
     expect(ctx.conversations[0].id).toBe('conv-new')
     expect(ctx.$router.replace).toHaveBeenCalledWith({ query: { conversation_id: 'conv-new' } })
+  })
+
+  it('generates longer fallback conversation ids', () => {
+    const id = AgentChat.methods.generateId()
+
+    expect(id).toMatch(/^conv_[0-9a-z]{24,}$/)
   })
 
   it('switches conversations during streaming by navigating without loading over the active run', async () => {
@@ -942,6 +978,39 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.setTimedInputError).toHaveBeenCalledWith('agentChat.deleteConversationFailed')
   })
 
+  it('removes public cached conversations when the server no longer has them', async () => {
+    localStorage.clear()
+    localStorage.setItem('public_conv_workflow-1', JSON.stringify([
+      { id: 'conv-local-only', title: 'Local only', messages: [], updated_at: 300 },
+      { id: 'conv-keep', title: 'Keep', messages: [], updated_at: 200 },
+    ]))
+    const error = new Error('not found')
+    error.response = { status: 404 }
+    const ctx = {
+      isPublicMode: true,
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversationId: 'conv-keep',
+      deleteConversationDialog: { visible: true, conversationId: 'conv-local-only' },
+      conversations: [
+        { id: 'conv-local-only', title: 'Local only', messages: [], updated_at: 300 },
+        { id: 'conv-keep', title: 'Keep', messages: [], updated_at: 200 },
+      ],
+      convApi: { delete: vi.fn(async () => { throw error }) },
+      saveConversationsToLocal: AgentChat.methods.saveConversationsToLocal,
+      setTimedInputError: vi.fn(),
+      $t: (key) => key,
+    }
+
+    await AgentChat.methods.confirmDeleteConversation.call(ctx)
+
+    const stored = JSON.parse(localStorage.getItem('public_conv_workflow-1'))
+    expect(stored.map(item => item.id)).toEqual(['conv-keep'])
+    expect(ctx.conversations.map(item => item.id)).toEqual(['conv-keep'])
+    expect(ctx.setTimedInputError).not.toHaveBeenCalled()
+    expect(ctx.convApi.delete).toHaveBeenCalledWith('workflow-1', 'conv-local-only', 'share-token')
+  })
+
   it('keys chat routes by full path so conversation changes detach active runs into old instances', () => {
     const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
 
@@ -1086,6 +1155,7 @@ describe('AgentChat conversation runtime state', () => {
       toolConfirmationLevel: 'off',
       attachedFiles: [{ original_name: 'secret.txt', file_path: 'uploads/secret.txt', mime_type: 'text/plain', size: 12 }],
       currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
       conversationId: 'conversation-1',
       abortController: null,
       streamEndedByWorkflowEvent: false,
@@ -1105,7 +1175,7 @@ describe('AgentChat conversation runtime state', () => {
     }
 
     const [url, options] = fetchCalls[0]
-    expect(url).toBe('/api/public/workflows/workflow-1/run')
+    expect(url).toBe('/api/public/workflows/workflow-1/run?share_token=share-token')
     expect(options.headers.Authorization).toBeUndefined()
     expect(options.headers['X-AgentClaw-Public-Session']).toBe('1')
     expect(options.credentials).toBe('same-origin')
@@ -1120,12 +1190,14 @@ describe('AgentChat conversation runtime state', () => {
   })
 
   it('keeps anonymous public conversation lists scoped to local storage', async () => {
-    const remoteList = vi.fn(async () => {
-      throw new Error('public list should not be called')
-    })
+    const remoteList = vi.fn(async () => ({
+      conversations: [
+        { id: 'conv-remote', title: 'Remote public', messages: [], updated_at: 30 },
+      ],
+    }))
     localStorage.clear()
     localStorage.setItem('public_conv_workflow-1', JSON.stringify([
-      { id: 'conv-local', title: 'Local conversation', messages: [] },
+      { id: 'conv-local', title: 'Local conversation', messages: [], updated_at: 20 },
     ]))
     const ctx = {
       isPublicMode: true,
@@ -1136,10 +1208,30 @@ describe('AgentChat conversation runtime state', () => {
 
     await AgentChat.methods.loadConversations.call(ctx)
 
-    expect(remoteList).not.toHaveBeenCalled()
-    expect(ctx.conversations).toEqual([
-      { id: 'conv-local', title: 'Local conversation', messages: [] },
-    ])
+    expect(remoteList).toHaveBeenCalledWith('workflow-1', 50, 'public')
+    expect(ctx.conversations.map(c => c.id)).toEqual(['conv-remote', 'conv-local'])
+  })
+
+  it('opens the public session before loading public conversations', async () => {
+    const order = []
+    const ctx = makeMountedCtx({
+      isPublicMode: true,
+      loadWorkflow: vi.fn(async function () {
+        order.push('workflow')
+        this.workflowWelcome = '开场白'
+        this.userInputFieldName = 'user_input'
+      }),
+      ensurePublicSession: vi.fn(async () => {
+        order.push('session')
+      }),
+      loadConversations: vi.fn(async () => {
+        order.push('conversations')
+      }),
+    })
+
+    await AgentChat.mounted.call(ctx)
+
+    expect(order.slice(0, 3)).toEqual(['workflow', 'session', 'conversations'])
   })
 
   it('prompts for admin auth instead of calling protected upload status without a token', async () => {

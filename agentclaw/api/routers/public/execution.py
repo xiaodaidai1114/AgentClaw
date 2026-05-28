@@ -5,13 +5,8 @@ Handles workflow run (blocking + streaming), confirm actions, and file downloads
 """
 
 from typing import Any, Dict, Iterable, Optional, Tuple
-import base64
-import hashlib
-import hmac
 import json
 import os
-import secrets
-import time as _time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -28,9 +23,21 @@ from agentclaw.api.routers.public.access import (
     check_public_rate_limit,
     forbidden_response,
     is_builtin_workflow,
-    trust_proxy_headers,
     verify_public_share_token,
     workflow_not_found_response,
+)
+from agentclaw.api.routers.public.session import (
+    PUBLIC_SESSION_COOKIE,
+    PUBLIC_SESSION_TTL_SECONDS,
+    bind_public_conversation_owner,
+    create_public_session,
+    ensure_public_user_id,
+    is_same_origin_public_page_request,
+    public_owner_id_from_request,
+    set_public_user_cookie,
+    verify_public_conversation_owner,
+    verify_public_page_session,
+    verify_public_session,
 )
 from agentclaw.api.schemas.common import ErrorCode
 from agentclaw.api.schemas.execution import (
@@ -51,9 +58,6 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["execution"])
 
 NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank"}
-PUBLIC_SESSION_COOKIE = "agentclaw_public_session"
-PUBLIC_SESSION_HEADER = "x-agentclaw-public-session"
-PUBLIC_SESSION_TTL_SECONDS = 2 * 60 * 60
 PUBLIC_FILE_INPUT_TYPES = {
     "Image",
     "File",
@@ -70,6 +74,53 @@ PUBLIC_FILE_INPUT_TYPES = {
 }
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(str(os.getenv(name, "")).strip() or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _public_max_message_length() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH", 4000)
+
+
+def _public_max_input_bytes() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MAX_INPUT_BYTES", 16384)
+
+
+def _public_request_body_error(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    max_input_bytes = _public_max_input_bytes()
+    size = len(json.dumps(body, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"))
+    if size > max_input_bytes:
+        return {
+            "error": f"Public request body is too large; max size is {max_input_bytes} bytes",
+            "code": "REQUEST_TOO_LARGE",
+        }
+    return None
+
+
+def _public_input_size_error(
+    *,
+    user_value: Any,
+    input_data: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    max_message_length = _public_max_message_length()
+    values: list[str] = []
+    if isinstance(user_value, str):
+        values.append(user_value)
+    for value in input_data.values():
+        if isinstance(value, str):
+            values.append(value)
+    if any(len(value) > max_message_length for value in values):
+        return {
+            "error": f"Public message is too large; max length is {max_message_length} characters",
+            "code": "REQUEST_TOO_LARGE",
+        }
+    return None
+
+
 def _is_builtin_workflow(workflow: Any, workflow_id: str) -> bool:
     """Return true for workflows that must never be exposed via anonymous public links."""
     return is_builtin_workflow(workflow, workflow_id)
@@ -79,110 +130,18 @@ def _workflow_not_found_response(workflow_id: str) -> JSONResponse:
     return workflow_not_found_response(workflow_id)
 
 
-def _request_origin(request: Request) -> str:
-    forwarded_proto = request.headers.get("x-forwarded-proto") if trust_proxy_headers() else None
-    forwarded_host = request.headers.get("x-forwarded-host") if trust_proxy_headers() else None
-    if forwarded_proto and forwarded_host:
-        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
-    return str(request.base_url).rstrip("/")
-
-
 def _is_same_origin_public_page_request(request: Request) -> bool:
-    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
-    if sec_fetch_site == "cross-site":
-        return False
-    if sec_fetch_site and sec_fetch_site not in {"same-origin", "same-site", "none"}:
-        return False
-
-    expected_origin = _request_origin(request)
-    origin = request.headers.get("origin")
-    referer = request.headers.get("referer")
-
-    if not origin and not referer:
-        return False
-
-    if origin and origin.rstrip("/") != expected_origin:
-        return False
-
-    if referer:
-        from urllib.parse import urlsplit
-
-        parsed = urlsplit(referer)
-        referer_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-        if referer_origin != expected_origin:
-            return False
-
-    return True
-
-
-def _public_session_signing_secret() -> bytes:
-    secret = os.getenv("AGENTCLAW_PUBLIC_SESSION_SECRET", "").strip()
-    if not secret:
-        from agentclaw.api.auth.token import AdminTokenManager
-
-        secret = AdminTokenManager.get_instance().token
-    return secret.encode("utf-8")
-
-
-def _base64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _base64url_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
-
-
-def _sign_public_session_payload(encoded_payload: str) -> str:
-    digest = hmac.new(
-        _public_session_signing_secret(),
-        encoded_payload.encode("ascii"),
-        hashlib.sha256,
-    ).digest()
-    return _base64url_encode(digest)
-
-
-def _create_public_session(workflow_id: str) -> Tuple[str, int]:
-    expires_at = int(_time.time()) + PUBLIC_SESSION_TTL_SECONDS
-    payload = {
-        "workflow_id": workflow_id,
-        "expires_at": expires_at,
-        "nonce": secrets.token_urlsafe(12),
-    }
-    encoded_payload = _base64url_encode(
-        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    )
-    signature = _sign_public_session_payload(encoded_payload)
-    return f"{encoded_payload}.{signature}", expires_at
+    return is_same_origin_public_page_request(request)
 
 
 def _verify_public_session(request: Request, workflow_id: str) -> bool:
-    if request.headers.get(PUBLIC_SESSION_HEADER) != "1":
-        return False
-    token = request.cookies.get(PUBLIC_SESSION_COOKIE)
-    if not token:
-        return False
-    try:
-        encoded_payload, signature = token.split(".", 1)
-    except ValueError:
-        return False
-
-    expected_signature = _sign_public_session_payload(encoded_payload)
-    if not hmac.compare_digest(signature, expected_signature):
-        return False
-
-    try:
-        session = json.loads(_base64url_decode(encoded_payload))
-    except Exception:
-        return False
-
-    if session.get("workflow_id") != workflow_id:
-        return False
-    return float(session.get("expires_at", 0)) > _time.time()
+    return verify_public_session(request, workflow_id)
 
 
 def _public_workflow_payload(workflow: Any, workflow_id: str) -> Dict[str, Any]:
     """Build the minimal workflow metadata needed by the anonymous chat page."""
+    from agentclaw.api.routers.public.audio import public_chat_audio_payload
+
     input_schema = None
     if hasattr(workflow, "get_input_schema"):
         input_schema = workflow.get_input_schema()
@@ -209,6 +168,7 @@ def _public_workflow_payload(workflow: Any, workflow_id: str) -> Dict[str, Any]:
         "form_config": form_config,
         "input_schema": input_schema,
         "user_input_field": user_input_field,
+        "chat_audio": public_chat_audio_payload(workflow),
     }
 
 
@@ -401,7 +361,8 @@ async def open_public_workflow_session(workflow_id: str, request: Request):
     if not _is_same_origin_public_page_request(request):
         return forbidden_response("Public workflow sessions must be opened from the same-origin public page")
 
-    token, expires_at = _create_public_session(workflow_id)
+    public_user_id, _new_user = ensure_public_user_id(request)
+    token, expires_at = create_public_session(workflow_id)
     response = JSONResponse(content={"ok": True, "expires_at": expires_at})
     response.set_cookie(
         PUBLIC_SESSION_COOKIE,
@@ -412,6 +373,7 @@ async def open_public_workflow_session(workflow_id: str, request: Request):
         secure=request.url.scheme == "https",
         path="/api",
     )
+    set_public_user_cookie(response, request, public_user_id)
     return response
 
 
@@ -479,6 +441,10 @@ async def _run_workflow_request(
             status_code=400,
             content={"error": "Invalid JSON body", "code": ErrorCode.INVALID_JSON},
         )
+    if public_mode:
+        public_body_error = _public_request_body_error(body)
+        if public_body_error:
+            return JSONResponse(status_code=413, content=public_body_error)
 
     workflow_id = forced_workflow_id or body.get("workflow_id")
     if not workflow_id:
@@ -506,7 +472,7 @@ async def _run_workflow_request(
         share_error = verify_public_share_token(workflow, workflow_id, request, body)
         if share_error:
             return share_error
-        if not _is_same_origin_public_page_request(request) or not _verify_public_session(request, workflow_id):
+        if not verify_public_page_session(request, workflow_id):
             return forbidden_response("Public workflow run requires a same-origin public page session")
         rate_error = check_public_rate_limit(workflow, workflow_id, request, "run")
         if rate_error:
@@ -527,6 +493,14 @@ async def _run_workflow_request(
 
     response_mode = body.get("response_mode") or body.get("mode", "blocking")
     thread_id = body.get("conversation_id") or str(uuid.uuid4())
+    if public_mode:
+        owner_id = public_owner_id_from_request(request)
+        if not verify_public_conversation_owner(workflow_id, thread_id, owner_id):
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Conversation not found", "code": ErrorCode.NOT_FOUND},
+            )
+        bind_public_conversation_owner(workflow_id, thread_id, owner_id)
     input_data = body.get("inputs")
     if input_data is None:
         input_data = body.get("input_data")
@@ -550,6 +524,13 @@ async def _run_workflow_request(
     if normalize_error:
         return JSONResponse(status_code=400, content=normalize_error)
     input_data = normalized_input_data or {}
+    if public_mode:
+        public_size_error = _public_input_size_error(
+            user_value=user_value,
+            input_data=input_data,
+        )
+        if public_size_error:
+            return JSONResponse(status_code=413, content=public_size_error)
 
     # Process file-type inputs
     from agentclaw.database import process_file_inputs
@@ -585,6 +566,7 @@ async def _run_workflow_request(
         user_id=user_id,
         request_stream=is_stream,
         from_channel=False if public_mode else bool(body.get("from_channel")),
+        public_mode=public_mode,
         disable_confirm_tool=True if public_mode else bool(body.get("disable_confirm_tool")),
         tool_confirmation_required=False if public_mode else bool(body.get("tool_confirmation_required")),
         tool_confirmation_level="off" if public_mode else str(body.get("tool_confirmation_level") or ("high" if body.get("tool_confirmation_required") else "off")),

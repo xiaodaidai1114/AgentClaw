@@ -285,6 +285,28 @@ def test_turtle_soup_state_helpers_follow_schema_contract():
     assert normalized["session"]["phase"] == "playing"
 
 
+def test_turtle_soup_choose_type_fallback_keeps_player_in_type_selection():
+    module = _load_turtle_soup_module()
+    session = module._coerce_session({"phase": "choose_type"})
+
+    normalized = module._normalize_phase_result(
+        {
+            "reply": "",
+            "phase": "choose_type",
+            "intent": "irrelevant_reply",
+            "ready_to_draft": False,
+            "session": session,
+        },
+        session,
+    )
+
+    assert normalized["phase"] == "choose_type"
+    assert normalized["intent"] == "irrelevant_reply"
+    assert "想玩什么类型" in normalized["reply"]
+    assert "继续提问" not in normalized["reply"]
+    assert "给出答案" not in normalized["reply"]
+
+
 def test_turtle_soup_prepare_turn_includes_recent_turn_history():
     module = _load_turtle_soup_module()
 

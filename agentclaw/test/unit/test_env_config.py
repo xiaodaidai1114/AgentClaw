@@ -40,6 +40,16 @@ def test_visible_env_var_names_include_public_security_limits():
     names = visible_env_var_names()
 
     assert "AGENTCLAW_MAX_REQUEST_BODY_BYTES" in names
+    assert "AGENTCLAW_ENABLE_ADMIN_API" in names
+    assert "AGENTCLAW_ENABLE_DASHBOARD" in names
+    assert "AGENTCLAW_ENABLE_API_DOCS" in names
+    assert "AGENTCLAW_PUBLIC_AUDIO_ALLOWED_MIME_TYPES" in names
+    assert "AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT" in names
+    assert "AGENTCLAW_PUBLIC_MAX_INPUT_BYTES" in names
+    assert "AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH" in names
+    assert "AGENTCLAW_PUBLIC_TOOL_POLICY" in names
+    assert "AGENTCLAW_PUBLIC_RATE_LIMIT_BACKEND" in names
+    assert "AGENTCLAW_PUBLIC_USER_TTL_SECONDS" in names
     assert "DOWNLOAD_MAX_FILE_SIZE_MB" in names
     assert "DOWNLOAD_MAX_TTL_SECONDS" in names
 

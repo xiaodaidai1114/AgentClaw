@@ -27,6 +27,41 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _csv_env_set(name: str) -> set[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def apply_public_tool_policy(
+    tool_schemas: list[dict] | None,
+    *,
+    public_mode: bool,
+    builtin_tool_names: set[str],
+) -> list[dict] | None:
+    if not public_mode or not tool_schemas:
+        return tool_schemas
+
+    policy = os.getenv("AGENTCLAW_PUBLIC_TOOL_POLICY", "allow").strip().lower() or "allow"
+    if policy == "allow":
+        return tool_schemas
+    if policy == "block_all":
+        return []
+    if policy != "block_builtin":
+        return tool_schemas
+
+    allowed_builtin_tools = _csv_env_set("AGENTCLAW_PUBLIC_ALLOWED_BUILTIN_TOOLS")
+    return [
+        schema
+        for schema in tool_schemas
+        if (
+            schema.get("function", {}).get("name", "") not in builtin_tool_names
+            or schema.get("function", {}).get("name", "") in allowed_builtin_tools
+        )
+    ]
+
+
 class _SafePromptFormatDict(dict):
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
@@ -957,6 +992,22 @@ class LLMNode(BaseNode):
             filtered = before_count - len(tool_schemas)
             if filtered > 0:
                 logger.info(f"节点 {self.id} 过滤了 {filtered} 个被禁用的工具")
+
+        builtin_tool_names = set().union(
+            set(skill_mcp_tool_names or []),
+            set(planning_mcp_tool_names or []),
+            set(download_mcp_tool_names or []),
+            set(browser_mcp_tool_names or []),
+            set(search_mcp_tool_names or []),
+            set(computer_mcp_tool_names or []),
+            set(coding_mcp_tool_names or []),
+            set(published_mcp_tool_names or []),
+        )
+        tool_schemas = apply_public_tool_policy(
+            tool_schemas,
+            public_mode=bool(getattr(context, "public_mode", False)),
+            builtin_tool_names=builtin_tool_names,
+        )
         
         # confirm_action 工具已废弃：工具确认统一由 Harness 工具风险确认流程处理。
         # /api/confirm/{confirm_id} 仍作为 Harness 确认回调接口保留。

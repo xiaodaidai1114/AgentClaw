@@ -83,6 +83,38 @@ def test_request_body_limit_respects_excluded_prefixes():
     assert state["called"] is True
 
 
+def test_request_body_limit_supports_path_specific_limits():
+    app = FastAPI()
+    state = {"public_audio_called": False, "workflow_called": False}
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_size=5,
+        path_prefixes=("/",),
+        path_limits={"/api/public/workflows/*/speech-to-text": 9},
+    )
+
+    @app.post("/api/public/workflows/public-audio/speech-to-text")
+    async def public_audio(request: Request):
+        state["public_audio_called"] = True
+        return {"size": len(await request.body())}
+
+    @app.post("/api/workflow/run")
+    async def workflow_run(request: Request):
+        state["workflow_called"] = True
+        return {"size": len(await request.body())}
+
+    public_audio_response = TestClient(app).post(
+        "/api/public/workflows/public-audio/speech-to-text",
+        content=b"123456789",
+    )
+    workflow_response = TestClient(app).post("/api/workflow/run", content=b"123456")
+
+    assert public_audio_response.status_code == 200
+    assert public_audio_response.json() == {"size": 9}
+    assert workflow_response.status_code == 413
+    assert state == {"public_audio_called": True, "workflow_called": False}
+
+
 def test_upload_size_limit_rejects_oversized_upload_before_handler_runs():
     app = FastAPI()
     state = {"called": False}

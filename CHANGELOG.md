@@ -2,6 +2,38 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [Unreleased]
+
+**Added**
+
+- 公开工作流页面新增匿名 public user 会话：访问分享页会生成独立 cookie，并将 public conversation 绑定到匿名用户；最近会话列表现在只展示当前匿名用户自己的会话，支持未登录用户多会话。
+- 新增公开工作流单页发布相关能力，Dashboard 可在 public-chat 模式下只开放公开聊天入口，公开运行、会话、音频接口统一携带 share token 与 same-origin public session 校验。
+- 新增 Dashboard 聊天语音能力，支持工作流级 ASR/TTS 开关、浏览器录音转写、助手消息手动播放语音，以及 Admin/Public 两套音频 API。
+- 新增音频服务与 provider registry，提供 OpenAI 兼容 ASR/TTS 适配，并让 `DocumentNode` 可对音频文件调用 ASR 后注入文本内容。
+- Dashboard 模型配置支持维护 `speech2text` / `tts` 模型类型，并可配置默认 ASR 模型、默认 TTS 模型、TTS 声音、音频格式和 ASR 支持的音频后缀。
+
+**Changed**
+
+- 公开分享访问现在必须显式携带有效 `share_token`，public session 只证明页面来源，不再替代分享 token。
+- 公开页面请求统一保留 `share_token`，避免分享页刷新、切换会话或发送消息时退化成 403。
+- 公开会话 ID 默认长度从短随机串提升到 24 位后缀，降低可猜测性。
+- 公开访问限流支持默认限流配置和 Redis 后端；无 Redis 时仍可回退到内存限流，除非显式要求 Redis。
+- 公网发布相关安全配置支持通过环境变量收紧 Admin API、Dashboard、MCP routes、Scheduler API、Channel routes、API docs、CORS 和上传体积限制。
+- 海龟汤主持人在选型、确认汤面、已结束等阶段收到无关内容时，会返回阶段相关引导，避免游戏开始前误判为提问结论。
+- 模型配置弹窗按模型类型区分渠道：chat 模型保留 chat 渠道，ASR/TTS 模型使用独立音频渠道，`embedding` / `rerank` 模型不再显示或保存 `channel`。
+- 会话模型选择器和模型服务将 ASR/TTS 与 embedding/rerank 一样视为非对话模型，避免被选为默认聊天、快速、降级或视觉模型。
+
+**Fixed**
+
+- 修复 public share token 中包含非 ASCII 字符时 `secrets.compare_digest()` 抛出 `TypeError` 并导致 500 的问题，现在会统一按 UTF-8 bytes 做常量时间比较。
+- 修复公开分享页可通过 `/dashboard/agent/<任意 id>?conversation_id=...` 绕过分享 token 直接访问对应智能体的问题。
+- 修复公开分享页删除会话失败、最近会话缺失，以及打开分享链接时短暂闪现 Dashboard 主页的问题。
+- 修复公开 ASR 上传体积限制无法按路径单独收敛的问题，public speech-to-text 路径现在使用独立音频上传限制。
+
+**Tests**
+
+- 新增/扩展公开访问、公开执行、公开会话、部署安全配置、上传限制、会话服务、海龟汤模板、Admin/Public 音频 API、音频服务、DocumentNode ASR、工作流聊天语音、Settings 模型配置和 Dashboard 前端回归测试。
+
 ## [1.0.9] - 2026-05-22
 
 **Added**

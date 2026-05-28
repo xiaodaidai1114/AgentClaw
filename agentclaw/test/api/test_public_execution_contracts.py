@@ -11,6 +11,13 @@ from agentclaw.test.conftest import auth_header
 pytestmark = pytest.mark.api
 
 
+@pytest.fixture(autouse=True)
+def _reset_public_session_state():
+    from agentclaw.api.routers.public.session import reset_public_user_state
+
+    reset_public_user_state()
+
+
 def _parse_sse_events(raw_text: str) -> list[dict]:
     events: list[dict] = []
     for block in raw_text.split("\n\n"):
@@ -40,6 +47,12 @@ def _open_public_session(public_api_client, workflow_id: str):
             "sec-fetch-site": "same-origin",
         },
     )
+
+
+def _open_public_session_client(public_api_client, workflow_id: str):
+    session = _open_public_session(public_api_client, workflow_id)
+    assert session.status_code == 200
+    return public_api_client
 
 
 def test_workflow_run_rejects_invalid_json_after_auth(public_api_client, auth_tokens):
@@ -319,6 +332,7 @@ def test_anonymous_public_workflow_run_uses_path_workflow_without_auth(
             captured["thread_id"] = thread_id
             captured["context_user_id"] = context.user_id
             captured["context_workflow_id"] = context.workflow_id
+            captured["public_mode"] = context.public_mode
             captured["disable_confirm_tool"] = context.disable_confirm_tool
             captured["tool_confirmation_level"] = context.tool_confirmation_level
             return {
@@ -367,8 +381,169 @@ def test_anonymous_public_workflow_run_uses_path_workflow_without_auth(
     assert captured["thread_id"] == "conv-public"
     assert captured["context_user_id"] is None
     assert captured["context_workflow_id"] == "wf-public"
+    assert captured["public_mode"] is True
     assert captured["disable_confirm_tool"] is True
     assert captured["tool_confirmation_level"] == "off"
+
+
+def test_anonymous_public_workflow_run_requires_share_token_even_with_same_origin_session(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "conversation_id": "conv-public",
+            "user": "hello public",
+            "inputs": {"question": "hello public"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+
+def test_anonymous_public_workflow_run_rejects_other_users_conversation_id(
+    public_api_client,
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    captured_threads: list[str] = []
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            captured_threads.append(thread_id)
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    first_client = _open_public_session_client(public_api_client, "wf-public")
+    second_client = TestClient(public_api_client.app)
+    _open_public_session_client(second_client, "wf-public")
+
+    body = {
+        "response_mode": "blocking",
+        "conversation_id": "conv-shared",
+        "user": "hello public",
+        "inputs": {"question": "hello public"},
+    }
+    first = first_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+    second = second_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 404
+    assert second.json()["code"] == "NOT_FOUND"
+    assert captured_threads == ["conv-shared"]
+
+
+def test_anonymous_public_workflow_metadata_requires_share_token_even_with_same_origin_session(
+    public_api_client,
+    monkeypatch,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class FakeWorkflow:
+        id = "wf-public"
+        name = "Public Turtle Soup"
+        description = "Guess the story"
+        welcome = "Ask yes/no questions"
+        public_share_enabled = True
+        public_share_token = "share-test"
+
+        def get_input_schema(self):
+            return None
+
+        def get_form_config(self):
+            return None
+
+        def get_user_input_field(self):
+            return "question"
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.get(
+        "/api/public/workflows/wf-public",
+        headers=_public_page_headers(),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
 
 
 def test_anonymous_public_workflow_run_requires_same_origin_page_session(
@@ -598,6 +773,9 @@ def test_anonymous_public_workflow_requires_explicit_publish_and_share_token(
         "/api/public/workflows/wf-public/session?share_token=wrong",
         headers={"origin": "http://testserver", "sec-fetch-site": "same-origin"},
     )
+    unicode_token_detail = public_api_client.get(
+        "/api/public/workflows/wf-public?share_token=中文"
+    )
     missing_token_run = public_api_client.post(
         "/api/public/workflows/wf-public/run",
         headers=_public_page_headers(),
@@ -610,6 +788,8 @@ def test_anonymous_public_workflow_requires_explicit_publish_and_share_token(
     assert missing_token_detail.json()["code"] == "FORBIDDEN"
     assert wrong_token_session.status_code == 403
     assert wrong_token_session.json()["code"] == "FORBIDDEN"
+    assert unicode_token_detail.status_code == 403
+    assert unicode_token_detail.json()["code"] == "FORBIDDEN"
     assert missing_token_run.status_code == 403
     assert missing_token_run.json()["code"] == "FORBIDDEN"
 
@@ -675,6 +855,166 @@ def test_anonymous_public_workflow_run_is_rate_limited(
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["code"] == "RATE_LIMITED"
+
+
+def test_anonymous_public_workflow_uses_default_rate_limit_when_workflow_has_none(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.routers.public import access as public_access
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        rate_limit = None
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "1/min")
+    public_access.reset_public_rate_limiter()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    body = {
+        "response_mode": "blocking",
+        "conversation_id": "conv-public",
+        "user": "hello public",
+        "inputs": {"question": "hello public"},
+    }
+    first = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+    second = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["code"] == "RATE_LIMITED"
+
+
+def test_public_rate_limit_can_use_redis_backend(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.routers.public import access as public_access
+
+    class FakeRedis:
+        def __init__(self):
+            self.items: dict[str, list[float]] = {}
+            self.expirations: dict[str, int] = {}
+
+        def zremrangebyscore(self, key, _min_score, max_score):
+            self.items[key] = [
+                value for value in self.items.get(key, []) if value > float(max_score)
+            ]
+
+        def zcard(self, key):
+            return len(self.items.get(key, []))
+
+        def zadd(self, key, mapping):
+            self.items.setdefault(key, []).extend(float(score) for score in mapping.values())
+
+        def expire(self, key, seconds):
+            self.expirations[key] = int(seconds)
+
+    class FakeDb:
+        def __init__(self, redis):
+            self.redis = redis
+
+        def is_redis_available(self):
+            return True
+
+        def get_sync_redis_client(self):
+            return self.redis
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        rate_limit = "1/min"
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    redis = FakeRedis()
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_RATE_LIMIT_BACKEND", "redis")
+    public_access.reset_public_rate_limiter()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(public_access, "get_database", lambda: FakeDb(redis), raising=False)
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    body = {
+        "response_mode": "blocking",
+        "conversation_id": "conv-public",
+        "user": "hello public",
+        "inputs": {"question": "hello public"},
+    }
+    first = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+    second = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json=body,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["code"] == "RATE_LIMITED"
+    assert redis.items
 
 
 def test_public_rate_limit_uses_connection_host_not_spoofed_forwarded_for_by_default(
@@ -797,6 +1137,107 @@ def test_anonymous_public_workflow_run_rejects_file_payloads_before_storage(
     assert response.status_code == 400
     assert response.json()["code"] == "INVALID_REQUEST"
     assert "File inputs are not supported" in response.json()["error"]
+
+
+def test_anonymous_public_workflow_rejects_oversized_message_before_execution(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            raise AssertionError("oversized public input must be rejected before execution")
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        raise AssertionError("oversized public input must not reach storage processing")
+
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH", "10")
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "conversation_id": "conv-public",
+            "user": "this message is too long",
+            "inputs": {"question": "this message is too long"},
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "REQUEST_TOO_LARGE"
+    assert "Public message is too large" in response.json()["error"]
+
+
+def test_anonymous_public_workflow_rejects_oversized_request_body_before_execution(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            raise AssertionError("oversized public request body must be rejected before execution")
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        raise AssertionError("oversized public request body must not reach storage processing")
+
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MAX_INPUT_BYTES", "120")
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "conversation_id": "conv-public",
+            "user": "ok",
+            "inputs": {
+                "question": "ok",
+                "nested": {"items": ["x" * 20, "y" * 20, "z" * 20]},
+            },
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "REQUEST_TOO_LARGE"
+    assert "Public request body is too large" in response.json()["error"]
 
 
 def test_anonymous_public_workflow_run_rejects_empty_files_field(

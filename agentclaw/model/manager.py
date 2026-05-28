@@ -246,6 +246,22 @@ class LLMConfig:
         legacy_vision_type = raw_model_type == "vision"
         model_type = "chat" if legacy_vision_type else raw_model_type
         supports_vision = bool(data.get("supports_vision") or legacy_vision_type)
+        extra_body = data.get("extra_body")
+        if extra_body is None:
+            extra_body = {
+                key: data[key]
+                for key in (
+                    "audio_format",
+                    "audio_type",
+                    "default_voice",
+                    "file_upload_limit_mb",
+                    "supported_file_extensions",
+                    "voice",
+                    "voices",
+                    "word_limit",
+                )
+                if key in data
+            } or None
         return cls(
             id=data.get("id", "default"),
             channel=channel,
@@ -259,7 +275,7 @@ class LLMConfig:
             max_tokens=data.get("max_tokens", 8192),
             timeout=data.get("timeout", 240),
             extra_headers=data.get("extra_headers"),
-            extra_body=data.get("extra_body"),
+            extra_body=extra_body,
             stream_usage=data.get("stream_usage", default_stream_usage),
         )
     
@@ -381,6 +397,9 @@ class LLMManager(BaseComponent):
         self.fallback_id = fallback or self._models_config.get("fallback")
         self.fast_id = fast or self._models_config.get("fast")
         self.vision_id: Optional[str] = self._models_config.get("vision")
+        self.speech2text_id: Optional[str] = self._models_config.get("speech2text")
+        self.tts_id: Optional[str] = self._models_config.get("tts")
+        self.tts_voice: Optional[str] = self._models_config.get("tts_voice")
         
         # 模型列表（按顺序，用于自动降级）
         self.model_ids = [m["id"] for m in self._models_config.get("models", [])]
@@ -446,6 +465,9 @@ class LLMManager(BaseComponent):
         self.fallback_id = self._fallback_override or self._models_config.get("fallback")
         self.fast_id = self._fast_override or self._models_config.get("fast")
         self.vision_id = self._models_config.get("vision")
+        self.speech2text_id = self._models_config.get("speech2text")
+        self.tts_id = self._models_config.get("tts")
+        self.tts_voice = self._models_config.get("tts_voice")
         self.model_ids = [m["id"] for m in self._models_config.get("models", [])]
         if self._workflow_id:
             self._current_model_id = self.default_id
@@ -2051,7 +2073,7 @@ class LLMManager(BaseComponent):
         else:
             status = "standby"
         
-        return {
+        info = {
             "id": config.id,
             "channel": config.channel,
             "provider": config.provider,
@@ -2064,6 +2086,9 @@ class LLMManager(BaseComponent):
             "status": status,
             "is_current": model_id == self._current_model_id,
         }
+        if config.extra_body:
+            info.update(config.extra_body)
+        return info
 
 
 def _usage_token_value(usage: Any, name: str) -> int:

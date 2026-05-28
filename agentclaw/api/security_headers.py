@@ -25,7 +25,7 @@ SECURITY_HEADERS = {
     "referrer-policy": "strict-origin-when-cross-origin",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
-    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "permissions-policy": "camera=(), microphone=(self), geolocation=(), payment=()",
 }
 
 

@@ -94,6 +94,7 @@ class WorkflowContext:
     timeout: Optional[int] = 300  # 超时时间（秒），None/<=0 表示不限制
     debug_mode: bool = False  # 调试模式（禁用超时检查）
     from_channel: bool = False  # 是否来自渠道调用
+    public_mode: bool = False  # 是否来自匿名 Public Agent 入口
     disable_confirm_tool: bool = False  # 禁用 confirm_action 工具（自动批准）
     tool_confirmation_required: bool = False  # 是否由 Harness 在高风险工具执行前强制确认，默认关闭以兼容旧行为
     tool_confirmation_level: str = "off"  # off/high/medium/low：从哪个风险等级开始要求确认
@@ -129,6 +130,7 @@ class WorkflowContext:
             timeout=self.timeout,
             debug_mode=self.debug_mode,  # 共享调试模式
             from_channel=self.from_channel,
+            public_mode=self.public_mode,
             disable_confirm_tool=self.disable_confirm_tool,
             tool_confirmation_required=self.tool_confirmation_required,
             tool_confirmation_level=self.tool_confirmation_level,

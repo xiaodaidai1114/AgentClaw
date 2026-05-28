@@ -1,1 +1,0 @@
-import{as as c,r as n}from"./index-DSKScKLh.js";function l(a){const e=n(!1),s=n(!1),t=c({...a()});function o(){Object.assign(t,a()),s.value=!1,e.value=!0}function r(u){Object.assign(t,u),s.value=!0,e.value=!0}function i(){e.value=!1}return{visible:e,isEdit:s,form:t,openCreate:o,openEdit:r,close:i}}export{l as u};

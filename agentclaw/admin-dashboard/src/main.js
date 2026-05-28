@@ -13,5 +13,7 @@ if (!redirectInvalidBindHost()) {
   app.use(createPinia())
   app.use(router)
   app.use(i18n)
-  app.mount('#app')
+  router.isReady().then(() => {
+    app.mount('#app')
+  })
 }

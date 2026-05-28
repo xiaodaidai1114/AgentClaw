@@ -24,6 +24,11 @@ from agentclaw.api.routers.public.access import (
     verify_public_share_token,
     workflow_not_found_response,
 )
+from agentclaw.api.routers.public.session import (
+    bind_public_conversation_owner,
+    public_owner_id_from_request,
+    verify_public_page_session,
+)
 
 
 PUBLIC_SOURCE = "public"
@@ -51,13 +56,10 @@ def _verify_public_conversation_access(
     share_error = verify_public_share_token(workflow, workflow_id, request, body)
     if share_error:
         return None, share_error
-    from agentclaw.api.routers.public.execution import (
-        _is_same_origin_public_page_request,
-        _verify_public_session,
-    )
-
-    if not _is_same_origin_public_page_request(request) or not _verify_public_session(request, workflow_id):
+    if not verify_public_page_session(request, workflow_id):
         return None, forbidden_response("Public conversation access requires a same-origin public page session")
+    if not public_owner_id_from_request(request):
+        return None, forbidden_response("Public conversation access requires an anonymous public user")
     rate_error = check_public_rate_limit(workflow, workflow_id, request, "conversation")
     if rate_error:
         return None, rate_error
@@ -71,17 +73,19 @@ async def list_conversations(
     source: str = Query(PUBLIC_SOURCE, description="Ignored; public API is always scoped to public"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    service: ConversationService = Depends(get_conversation_service),
 ) -> dict:
-    """Return no collection data for anonymous clients.
-
-    Public conversations are addressed by their unguessable conversation id.
-    The browser keeps its own local index so a new anonymous visitor cannot
-    enumerate another visitor's chat history.
-    """
+    """Return conversations owned by the current anonymous public user."""
     workflow, access_error = _verify_public_conversation_access(workflow_id, request)
     if access_error:
         return access_error
-    return {"conversations": [], "total": 0, "page": page, "page_size": page_size}
+    return await service.list_conversations(
+        workflow_id=workflow_id,
+        source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("", summary="Create public conversation")
@@ -101,14 +105,17 @@ async def create_conversation(
     quota_error = check_public_conversation_quota(workflow, req.workflow_id, request)
     if quota_error:
         return quota_error
-    return await service.create_conversation(
+    owner_id = public_owner_id_from_request(request)
+    conv = await service.create_conversation(
         workflow_id=req.workflow_id,
         title=req.title,
         source=PUBLIC_SOURCE,
-        owner_id=None,
+        owner_id=owner_id,
         user_id=None,
         tenant_id=None,
     )
+    bind_public_conversation_owner(req.workflow_id, conv.get("id", ""), owner_id)
+    return conv
 
 
 @router.get("/{workflow_id}/{conversation_id}", summary="Get public conversation")
@@ -126,6 +133,7 @@ async def get_conversation(
         workflow_id,
         conversation_id,
         source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -153,6 +161,7 @@ async def update_conversation(
         title=req.title,
         messages=req.messages,
         source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -174,6 +183,7 @@ async def delete_conversation(
         workflow_id,
         conversation_id,
         source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
     )
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -196,6 +206,7 @@ async def submit_feedback(
         workflow_id,
         conversation_id,
         source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -222,6 +233,7 @@ async def get_feedback(
         workflow_id,
         conversation_id,
         source=PUBLIC_SOURCE,
+        owner_id=public_owner_id_from_request(request),
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")

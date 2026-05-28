@@ -113,7 +113,7 @@ class AvailableModel(BaseModel):
     id: str
     provider: str
     model: str
-    model_type: str  # chat
+    model_type: str  # chat / embedding / rerank / speech2text / tts
     supports_vision: bool = False
 
 

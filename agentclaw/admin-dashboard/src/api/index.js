@@ -158,6 +158,19 @@ export const modelsApi = {
   getAvailable: () => api.get('/models/available'),
 }
 
+export const audioApi = {
+  speechToText: (file, modelId = '') => {
+    const form = new FormData()
+    form.append('file', file)
+    if (modelId) form.append('model_id', modelId)
+    return api.post('/audio/speech-to-text', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  textToSpeech: (data) => api.post('/audio/text-to-speech', data, { responseType: 'blob' }),
+  voices: (params = {}) => api.get('/audio/voices', { params }),
+}
+
 // Prompts API
 export const promptsApi = {
   list: (workflowId) => api.get(`/prompts/${workflowId}`),
@@ -229,6 +242,18 @@ const publicApi = axios.create({
 })
 
 const publicSessionHeaders = { 'X-AgentClaw-Public-Session': '1' }
+
+const publicShareTokenParams = (shareToken = '', extra = {}) => {
+  const params = { ...extra }
+  if (shareToken) params.share_token = shareToken
+  return params
+}
+
+const publicConversationPayload = (workflowId, title, source, shareToken = '') => {
+  const payload = { workflow_id: workflowId, title, source }
+  if (shareToken) payload.share_token = shareToken
+  return payload
+}
 
 publicApi.interceptors.response.use(
   (response) => response.data,
@@ -363,20 +388,38 @@ export const schedulerApi = {
 }
 
 export const publicWorkflowsApi = {
-  get: (workflowId, shareToken = '') => publicApi.get(`/public/workflows/${encodeURIComponent(workflowId)}`, { params: { share_token: shareToken } }),
-  openSession: (workflowId, shareToken = '') => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/session`, null, { params: { share_token: shareToken }, withCredentials: true }),
+  get: (workflowId, shareToken = '') => publicApi.get(`/public/workflows/${encodeURIComponent(workflowId)}`, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
+  openSession: (workflowId, shareToken = '') => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/session`, null, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
+}
+
+export const publicAudioApi = {
+  speechToText: (workflowId, shareToken = '', file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/speech-to-text`, form, {
+      params: publicShareTokenParams(shareToken),
+      headers: { ...publicSessionHeaders, 'Content-Type': 'multipart/form-data' },
+      withCredentials: true,
+    })
+  },
+  textToSpeech: (workflowId, shareToken = '', data = {}) => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/text-to-speech`, data, {
+    params: publicShareTokenParams(shareToken),
+    headers: publicSessionHeaders,
+    responseType: 'blob',
+    withCredentials: true,
+  }),
 }
 
 // 公开的 Conversations API（用于分享页面）
 export const publicConversationsApi = {
-  list: (workflowId, pageSize = 50, source = 'public', shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}`, { params: { page: 1, page_size: pageSize, source, share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
-  create: (workflowId, title = null, source = 'public', shareToken = '') => publicApi.post('/conversations', { workflow_id: workflowId, title, source, share_token: shareToken }, { headers: publicSessionHeaders, withCredentials: true }),
-  get: (workflowId, conversationId, shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, { params: { share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
-  update: (workflowId, conversationId, data, shareToken = '') => publicApi.put(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, data, { params: { share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
-  delete: (workflowId, conversationId, shareToken = '') => publicApi.delete(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, { params: { share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
+  list: (workflowId, pageSize = 50, source = 'public', shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}`, { params: publicShareTokenParams(shareToken, { page: 1, page_size: pageSize, source }), headers: publicSessionHeaders, withCredentials: true }),
+  create: (workflowId, title = null, source = 'public', shareToken = '') => publicApi.post('/conversations', publicConversationPayload(workflowId, title, source, shareToken), { headers: publicSessionHeaders, withCredentials: true }),
+  get: (workflowId, conversationId, shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
+  update: (workflowId, conversationId, data, shareToken = '') => publicApi.put(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, data, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
+  delete: (workflowId, conversationId, shareToken = '') => publicApi.delete(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
   // 反馈 API
   submitFeedback: (workflowId, conversationId, messageIndex, feedback, shareToken = '') =>
-    publicApi.post(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}/feedback`, { message_index: messageIndex, feedback }, { params: { share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
+    publicApi.post(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}/feedback`, { message_index: messageIndex, feedback }, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
   getFeedback: (workflowId, conversationId, shareToken = '') =>
-    publicApi.get(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}/feedback`, { params: { share_token: shareToken }, headers: publicSessionHeaders, withCredentials: true }),
+    publicApi.get(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}/feedback`, { params: publicShareTokenParams(shareToken), headers: publicSessionHeaders, withCredentials: true }),
 }

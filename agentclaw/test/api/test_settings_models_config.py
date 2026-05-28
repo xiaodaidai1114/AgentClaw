@@ -196,3 +196,31 @@ def test_settings_models_config_preserves_existing_secret_when_payload_omits_api
 
     raw = json.loads(models_path.read_text(encoding="utf-8"))
     assert raw["models"][0]["api_key"] == "sk-existing"
+
+
+def test_settings_models_config_preserves_audio_defaults(tmp_path):
+    models_path = tmp_path / "models.json"
+    models_path.write_text(json.dumps({"models": []}), encoding="utf-8")
+    service, _ = _service(tmp_path)
+
+    updated = service.update_models_config(
+        {
+            "default": "chat",
+            "speech2text": "asr",
+            "tts": "voice",
+            "tts_voice": "alloy",
+            "models": [
+                {"id": "chat", "channel": "openai", "type": "chat", "model": "gpt"},
+                {"id": "asr", "channel": "openai", "type": "speech2text", "model": "whisper-1"},
+                {"id": "voice", "channel": "openai", "type": "tts", "model": "tts-1", "voice": "alloy"},
+            ],
+        }
+    )
+
+    raw = json.loads(models_path.read_text(encoding="utf-8"))
+    assert raw["speech2text"] == "asr"
+    assert raw["tts"] == "voice"
+    assert raw["tts_voice"] == "alloy"
+    assert updated["speech2text"] == "asr"
+    assert updated["tts"] == "voice"
+    assert updated["tts_voice"] == "alloy"

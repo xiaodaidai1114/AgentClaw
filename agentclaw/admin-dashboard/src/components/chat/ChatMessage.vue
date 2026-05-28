@@ -347,6 +347,18 @@
               <svg v-if="!msg.copied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
             </button>
+            <button
+              v-if="ttsAvailable && msg.content"
+              class="action-btn"
+              :class="{ active: ttsState === 'playing', loading: ttsState === 'generating' }"
+              :disabled="ttsState === 'generating'"
+              :title="ttsState === 'generating' ? $t('chatMessage.generatingSpeech') : ttsState === 'playing' ? $t('chatMessage.stopSpeech') : $t('chatMessage.speak')"
+              @click="$emit('speak')"
+            >
+              <svg v-if="ttsState === 'generating'" class="icon-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
+              <svg v-else-if="ttsState === 'playing'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+            </button>
             <button class="action-btn" :class="{ active: msg.feedback === 'like' }" :title="$t('chatMessage.positiveFeedback')" @click="$emit('feedback', 'like')">
               <svg viewBox="0 0 24 24" :fill="msg.feedback === 'like' ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
             </button>
@@ -372,8 +384,10 @@ export default {
   props: {
     msg: { type: Object, required: true },
     processCollapsed: { type: Boolean, default: false },
+    ttsAvailable: { type: Boolean, default: false },
+    ttsState: { type: String, default: '' },
   },
-  emits: ['copy', 'edit', 'feedback', 'toggle-reasoning', 'approve', 'toggle-process-view'],
+  emits: ['copy', 'edit', 'feedback', 'toggle-reasoning', 'approve', 'toggle-process-view', 'speak'],
   data() {
     return { selectedTool: null, summaryExpanded: !!this.msg.is_summary, isEditing: false, editText: '' }
   },
@@ -737,6 +751,8 @@ export default {
 }
 .action-btn:hover { background: var(--bg-hover, #f1f1f1); color: var(--text-sec, #52525b); }
 .action-btn.active { color: var(--accent-main, #3b82f6); }
+.action-btn.loading { color: var(--accent-main, #3b82f6); }
+.action-btn:disabled { cursor: default; opacity: 0.85; }
 .action-btn.copied { color: var(--success-color, #10b981); }
 .action-btn svg { width: 14px; height: 14px; }
 .footer-divider { width: 1px; height: 12px; background: var(--border-base, #e4e4e7); margin: 0 8px; }

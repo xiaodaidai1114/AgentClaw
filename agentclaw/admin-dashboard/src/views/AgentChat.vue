@@ -1,6 +1,6 @@
 <template>
-  <div class="agent-chat">
-    <ChatSidebar v-if="!isPublicMode" :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
+  <div class="agent-chat" :class="{ 'public-chat': isPublicMode }">
+    <ChatSidebar :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
     <div class="chat-main">
       <div v-if="!isPublicMode" class="top-bar">
         <div class="top-bar-title">{{ workflowName || 'AgentClaw' }}</div>
@@ -121,10 +121,10 @@
             <span>{{ processCollapsed ? $t('agentChat.expandProcess') : $t('agentChat.collapseProcess') }}</span>
           </button>
         </div>
-        <ChatMessage v-for="(msg, index) in visibleMessages" :key="msg._origIndex != null ? msg._origIndex : index" :msg="msg" :process-collapsed="processCollapsed" @copy="copyMessage(msg, msg._origIndex != null ? msg._origIndex : index)" @edit="(newText) => editMessage(msg, msg._origIndex != null ? msg._origIndex : index, newText)" @feedback="(type) => feedbackMessage(msg, msg._origIndex != null ? msg._origIndex : index, type)" @toggle-reasoning="toggleReasoning(msg._origIndex != null ? msg._origIndex : index)" @approve="(action) => handleApproval(msg, msg._origIndex != null ? msg._origIndex : index, action)" @toggle-process-view="processCollapsed = !processCollapsed" />
+        <ChatMessage v-for="(msg, index) in visibleMessages" :key="msg._origIndex != null ? msg._origIndex : index" :msg="msg" :process-collapsed="processCollapsed" :tts-available="ttsAvailable" :tts-state="ttsStateForMessage(msg)" @copy="copyMessage(msg, msg._origIndex != null ? msg._origIndex : index)" @edit="(newText) => editMessage(msg, msg._origIndex != null ? msg._origIndex : index, newText)" @feedback="(type) => feedbackMessage(msg, msg._origIndex != null ? msg._origIndex : index, type)" @toggle-reasoning="toggleReasoning(msg._origIndex != null ? msg._origIndex : index)" @approve="(action) => handleApproval(msg, msg._origIndex != null ? msg._origIndex : index, action)" @toggle-process-view="processCollapsed = !processCollapsed" @speak="speakMessage(msg)" />
         <StreamingMessage v-if="isStreaming || isCompressingContext" :streamingContent="streamingContent" :reasoningContent="reasoningContent" :thinkingStatus="thinkingStatus" :nodeSteps="nodeSteps" :todoItems="todoItems" :process-collapsed="processCollapsed" @toggle-process-view="processCollapsed = !processCollapsed" />
       </div>
-      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
+      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :speechInputAvailable="speechInputAvailable" :recording="speechRecording" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @speech-input="toggleSpeechInput" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
       <input ref="fileInput" type="file" multiple style="display:none" @change="handleFileSelect" />
     </div>
     <div v-if="!isPublicMode" class="info-panel" :class="{ collapsed: infoPanelCollapsed }" :style="infoPanelCollapsed ? {} : { width: infoPanelWidth + 'px' }">
@@ -253,8 +253,10 @@ import {
   conversationsApi,
   publicConversationsApi,
   publicWorkflowsApi,
+  publicAudioApi,
   tasksApi,
   executionApi,
+  audioApi,
   buildWorkflowRunInputs,
   getAdminAuthHeaders,
   handleAdminFetchAuthError,
@@ -342,6 +344,15 @@ function getManagedRunKey(vm, conversationId = vm?.conversationId) {
   })
 }
 
+function generateLocalConversationId() {
+  const suffix = [
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2),
+    Math.random().toString(36).slice(2),
+  ].join('')
+  return `conv_${suffix.padEnd(24, '0').slice(0, 24)}`
+}
+
 const RUN_SNAPSHOT_FIELDS = [
   'isStreaming',
   'workflowStatus',
@@ -383,7 +394,7 @@ function ensureConversationIdForRun(vm) {
   const routeConversationId = getRouteConversationId(vm)
   const conversationId = routeConversationId || (typeof vm.generateId === 'function'
     ? vm.generateId()
-    : `conv_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 11)}`)
+    : generateLocalConversationId())
   vm.conversationId = conversationId
   ensureLocalConversation(vm, conversationId)
   syncRouteConversationId(vm, conversationId)
@@ -404,6 +415,7 @@ export default {
       workflowName: '',
       workflowDesc: '',
       workflowWelcome: '',
+      chatAudio: null,
       conversationId: '',
       messages: [],
       inputText: '',
@@ -473,6 +485,15 @@ export default {
       runUnsubscribe: null,
       activeRunKey: '',
       lastStreamingDraftPersistAt: 0,
+      speechRecording: false,
+      speechRecorder: null,
+      speechStream: null,
+      speechChunks: [],
+      ttsAudio: null,
+      ttsPlaybackUrl: '',
+      ttsMessageKey: '',
+      ttsGenerating: false,
+      ttsPlaying: false,
     }
   },
   computed: {
@@ -510,6 +531,23 @@ export default {
     },
     canManualCompressContext() {
       return !this.isPublicMode && !this.isStreaming && !this.isCompressingContext && !!this.currentWorkflowId && !!this.conversationId && this.messages.length > 0
+    },
+    normalizedChatAudio() {
+      const config = this.chatAudio || {}
+      return {
+        enabled: !!config.enabled,
+        speech_input_enabled: !!config.speech_input_enabled,
+        tts_enabled: !!config.tts_enabled,
+        speech2text_model_id: config.speech2text_model_id || '',
+        tts_model_id: config.tts_model_id || '',
+        tts_voice: config.tts_voice || '',
+      }
+    },
+    speechInputAvailable() {
+      return this.normalizedChatAudio.enabled && this.normalizedChatAudio.speech_input_enabled
+    },
+    ttsAvailable() {
+      return this.normalizedChatAudio.enabled && this.normalizedChatAudio.tts_enabled
     },
     formEditable() { return this.workflowStatus === 'idle' || this.workflowStatus === 'finished' },
     canSend() { return this.inputEnabled && this.inputText.trim() && !this.inputError },
@@ -651,14 +689,18 @@ export default {
     this.currentWorkflowId = this.workflowId || this.$route.params.id
     this.isInitializing = true
     try {
-      const tasks = [
-        this.loadWorkflow(),
-        this.loadConversations(),
-      ]
-      if (!this.isPublicMode) {
+      if (this.isPublicMode) {
+        await this.loadWorkflow()
+        if (!this.workflowLoadError) await this.ensurePublicSession()
+        await this.loadConversations()
+      } else {
+        const tasks = [
+          this.loadWorkflow(),
+          this.loadConversations(),
+        ]
         tasks.push(this.checkUploadStatus(), this.loadModels(), this.loadToolConfig())
+        await Promise.all(tasks)
       }
-      await Promise.all(tasks)
       const convId = this.$route.query.conversation_id
       const seedInput = consumeRouteSeedInput(this)
       const hasKnownPublicConversation = this.conversations.some(c => c.id === convId)
@@ -686,8 +728,152 @@ export default {
       this.inputErrorTimer = null
     }
     this.unsubscribeFromRun?.()
+    this.stopSpeechStream?.()
+    this.stopTtsPlayback?.()
   },
   methods: {
+    async toggleSpeechInput() {
+      if (!this.speechInputAvailable || this.isStreaming) return
+      if (this.speechRecording) {
+        this.stopSpeechInput()
+        return
+      }
+      await this.startSpeechInput()
+    },
+    async startSpeechInput() {
+      if (!this.speechInputAvailable || this.speechRecording) return
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        this.setTimedInputError(this.$t('chatInput.speechInputUnsupported'))
+        return
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const recorder = new MediaRecorder(stream)
+        this.speechChunks = []
+        this.speechStream = stream
+        this.speechRecorder = recorder
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) this.speechChunks.push(event.data)
+        }
+        recorder.onstop = () => this.handleSpeechRecordingStopped()
+        recorder.start()
+        this.speechRecording = true
+      } catch (error) {
+        console.error('语音输入启动失败:', error)
+        this.setTimedInputError(this.$t('chatInput.speechInputFailed'))
+        this.stopSpeechStream()
+      }
+    },
+    stopSpeechInput() {
+      if (this.speechRecorder && this.speechRecorder.state !== 'inactive') {
+        this.speechRecorder.stop()
+        return
+      }
+      this.speechRecording = false
+      this.stopSpeechStream()
+    },
+    stopSpeechStream() {
+      if (this.speechStream) {
+        this.speechStream.getTracks().forEach(track => track.stop())
+      }
+      this.speechStream = null
+      this.speechRecorder = null
+      this.speechRecording = false
+    },
+    async handleSpeechRecordingStopped() {
+      const chunks = this.speechChunks
+      this.speechChunks = []
+      this.stopSpeechStream()
+      if (!chunks.length) return
+      try {
+        const mimeType = chunks[0]?.type || 'audio/webm'
+        const blob = new Blob(chunks, { type: mimeType })
+        const file = new File([blob], `speech-${Date.now()}.webm`, { type: mimeType })
+        const result = this.isPublicMode
+          ? await this.transcribePublicSpeech(file)
+          : await audioApi.speechToText(file, this.normalizedChatAudio.speech2text_model_id)
+        const text = String(result?.text || '').trim()
+        if (text) {
+          this.inputText = this.inputText ? `${this.inputText}\n${text}` : text
+          this.$nextTick(() => {
+            this.$refs.chatInput?.focus?.()
+            this.$refs.chatInput?.autoResize?.()
+          })
+        }
+      } catch (error) {
+        console.error('语音识别失败:', error)
+        this.setTimedInputError(this.$t('chatInput.speechRecognitionFailed'))
+      }
+    },
+    async speakMessage(msg) {
+      if (!this.ttsAvailable || !msg?.content) return
+      const key = this.messageAudioKey(msg)
+      if (this.ttsMessageKey === key && this.ttsPlaying) {
+        this.stopTtsPlayback()
+        return
+      }
+      if (this.ttsMessageKey === key && this.ttsGenerating) return
+
+      this.stopTtsPlayback()
+      this.ttsMessageKey = key
+      this.ttsGenerating = true
+      this.ttsPlaying = false
+      try {
+        const blob = this.isPublicMode
+          ? await this.synthesizePublicSpeech(msg.content)
+          : await audioApi.textToSpeech({
+            text: msg.content,
+            model_id: this.normalizedChatAudio.tts_model_id,
+            voice: this.normalizedChatAudio.tts_voice,
+          })
+        if (this.ttsMessageKey !== key) return
+        this.ttsPlaybackUrl = URL.createObjectURL(blob)
+        const audio = new Audio(this.ttsPlaybackUrl)
+        this.ttsAudio = audio
+        audio.onended = () => {
+          if (this.ttsMessageKey === key) this.stopTtsPlayback()
+        }
+        this.ttsGenerating = false
+        this.ttsPlaying = true
+        await audio.play()
+      } catch (error) {
+        if (this.ttsMessageKey === key) {
+          console.error('语音播放失败:', error)
+          this.stopTtsPlayback()
+          this.setTimedInputError(this.$t('chatMessage.speechGenerationFailed'))
+        }
+      }
+    },
+    async transcribePublicSpeech(file) {
+      await this.ensurePublicSession()
+      return publicAudioApi.speechToText(this.currentWorkflowId, this.shareToken, file)
+    },
+    async synthesizePublicSpeech(text) {
+      await this.ensurePublicSession()
+      return publicAudioApi.textToSpeech(this.currentWorkflowId, this.shareToken, { text })
+    },
+    messageAudioKey(msg) {
+      return String(msg?._origIndex ?? msg?.id ?? msg?.timestamp ?? msg?.content ?? '')
+    },
+    ttsStateForMessage(msg) {
+      if (this.ttsMessageKey !== this.messageAudioKey(msg)) return ''
+      if (this.ttsGenerating) return 'generating'
+      if (this.ttsPlaying) return 'playing'
+      return ''
+    },
+    stopTtsPlayback() {
+      if (this.ttsAudio) {
+        this.ttsAudio.pause()
+        this.ttsAudio = null
+      }
+      if (this.ttsPlaybackUrl) {
+        URL.revokeObjectURL(this.ttsPlaybackUrl)
+        this.ttsPlaybackUrl = ''
+      }
+      this.ttsMessageKey = ''
+      this.ttsGenerating = false
+      this.ttsPlaying = false
+    },
     setTimedInputError(message) {
       if (this.inputErrorTimer) clearTimeout(this.inputErrorTimer)
       this.inputError = message
@@ -762,6 +948,7 @@ export default {
         this.workflowName = workflow.name
         this.workflowDesc = workflow.description
         this.workflowWelcome = workflow.welcome || ''
+        this.chatAudio = workflow.chat_audio || null
         this.inputSchema = workflow.input_schema
         this.formConfig = workflow.form_config
         this.userInputFieldName = workflow.user_input_field
@@ -994,7 +1181,30 @@ export default {
         }
       }
       if (this.isPublicMode) {
-        this.conversations = localConvs
+        try {
+          const res = await this.convApi.list(this.currentWorkflowId, 50, 'public')
+          const apiConvs = res.conversations || []
+          const merged = []
+          for (const conv of [...apiConvs, ...localConvs]) {
+            if (!conv?.id) continue
+            const existingIndex = merged.findIndex(item => item.id === conv.id)
+            if (existingIndex < 0) {
+              merged.push(conv)
+              continue
+            }
+            const existing = merged[existingIndex]
+            const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
+            const incomingMessages = Array.isArray(conv.messages) ? conv.messages : []
+            if (incomingMessages.length > existingMessages.length) {
+              merged[existingIndex] = conv
+            }
+          }
+          merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
+          this.conversations = merged
+          localStorage.setItem(key, JSON.stringify(merged))
+        } catch (error) {
+          this.conversations = localConvs
+        }
         return
       }
       const source = this.isPublicMode ? 'public' : 'admin'
@@ -1136,7 +1346,7 @@ export default {
       this.runUnsubscribe = agentRunManager.subscribe(key, snapshot => applyManagedRunSnapshot(this, snapshot))
       return true
     },
-    generateId() { return 'conv_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9) },
+    generateId() { return generateLocalConversationId() },
     navigateToConversation(convId) {
       if (!convId) return
       this.$router.replace({ query: { ...withoutSeedInput(this.$route.query), conversation_id: convId } })
@@ -1245,10 +1455,22 @@ export default {
       const convId = this.deleteConversationDialog.conversationId
       this.deleteConversationDialog = { visible: false, conversationId: '' }
       if (!convId) return
+      const removeConversationLocally = async () => {
+        this.conversations = this.conversations.filter(c => c.id !== convId)
+        this.saveConversationsToLocal({ replace: true })
+        if (convId === this.conversationId) {
+          if (this.conversations.length > 0) await this.loadConversation(this.conversations[0].id)
+          else await this.newConversation()
+        }
+      }
       let deleteResult = null
       try {
         deleteResult = await this.convApi.delete(this.currentWorkflowId, convId, this.shareToken)
       } catch (e) {
+        if (this.isPublicMode && e?.response?.status === 404) {
+          await removeConversationLocally()
+          return
+        }
         console.error('删除会话失败:', e)
         this.setTimedInputError(this.$t('agentChat.deleteConversationFailed'))
         return
@@ -1257,12 +1479,7 @@ export default {
         this.setTimedInputError(this.$t('agentChat.deleteConversationFailed'))
         return
       }
-      this.conversations = this.conversations.filter(c => c.id !== convId)
-      this.saveConversationsToLocal({ replace: true })
-      if (convId === this.conversationId) {
-        if (this.conversations.length > 0) await this.loadConversation(this.conversations[0].id)
-        else await this.newConversation()
-      }
+      await removeConversationLocally()
     },
     async updateCurrentConversation() {
       const conv = this.conversations.find(c => c.id === this.conversationId)
@@ -1537,7 +1754,6 @@ export default {
       if (!this.isPublicMode && this.selectedModel) inputs.model = this.selectedModel
       if (!this.isPublicMode && this.isBuiltin && !this.preFilterEnabled) inputs.__skip_filter__ = true
       const body = { workflow_id: this.currentWorkflowId, response_mode: 'streaming', conversation_id: conversationId, inputs }
-      if (this.isPublicMode) body.share_token = this.shareToken
       if (!this.isPublicMode) {
         body.tool_confirmation_required = !!this.toolConfirmationRequired
         body.tool_confirmation_level = this.toolConfirmationLevel
@@ -1546,9 +1762,12 @@ export default {
       const workflowUserId = localStorage.getItem('workflow_user_id')
       if (!this.isPublicMode && workflowUserId) body.user_id = workflowUserId
       if (!this.isPublicMode && this.attachedFiles.length) body.files = this.attachedFiles.map(f => ({ original_name: f.original_name, path: f.file_path, mime_type: f.mime_type, size: f.size }))
-      const endpoint = this.isPublicMode
+      let endpoint = this.isPublicMode
         ? `${baseUrl}/api/public/workflows/${encodeURIComponent(this.currentWorkflowId)}/run`
         : `${baseUrl}/api/workflow/run`
+      if (this.isPublicMode && this.shareToken) {
+        endpoint += `?share_token=${encodeURIComponent(this.shareToken)}`
+      }
       const headers = { 'Content-Type': 'application/json' }
       if (this.isPublicMode) {
         await this.ensurePublicSession()
@@ -2159,6 +2378,7 @@ export default {
 * { box-sizing: border-box; }
 .mono-font { font-family: var(--font-mono); }
 .agent-chat { display: flex; height: 100vh; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; -webkit-font-smoothing: antialiased; background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%); margin: -24px; width: calc(100% + 48px); }
+.agent-chat.public-chat { margin: 0; width: 100%; height: 100vh; overflow: hidden; }
 
 .chevron-icon {
   flex-shrink: 0;
@@ -2173,6 +2393,7 @@ export default {
 
 /* Chat Main */
 .chat-main { flex: 1; display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(248,250,252,0.94)); position: relative; min-width: 400px; }
+.public-chat .chat-main { min-width: 0; }
 .top-bar { padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-light); z-index: 10; background: rgba(255,255,255,0.85); backdrop-filter: blur(12px); position: relative; }
 .top-bar-title { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; }
 .model-selector { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-app); border: 1px solid var(--border-base); border-radius: var(--radius-full); cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-sec); transition: all 0.2s; }

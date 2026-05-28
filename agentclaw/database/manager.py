@@ -199,6 +199,7 @@ class DatabaseManager(BaseComponent):
         
         # 每个事件循环的 Redis 客户端缓存（避免跨循环问题）
         self._redis_clients: Dict[int, Any] = {}
+        self._sync_redis_client = None
         
         # Checkpointer 专用连接池 (psycopg)
         self._checkpointer_pool = None
@@ -459,6 +460,18 @@ class DatabaseManager(BaseComponent):
         except Exception as e:
             logger.error(f"获取 Redis 客户端失败: {e}")
             return None
+
+    def get_sync_redis_client(self) -> Optional[Any]:
+        """获取同步 Redis 客户端（用于同步路由辅助逻辑）。"""
+        if not self.redis_config:
+            return None
+        try:
+            if self._sync_redis_client is None:
+                self._sync_redis_client = self.create_sync_redis_client(self.redis_config)
+            return self._sync_redis_client
+        except Exception as e:
+            logger.warning(f"获取同步 Redis 客户端失败: {e}")
+            return None
     
     def is_redis_available(self) -> bool:
         """检查 Redis 是否可用"""
@@ -633,6 +646,12 @@ class DatabaseManager(BaseComponent):
             except Exception as e:
                 logger.warning(f"关闭 Redis 客户端 {loop_id} 失败: {e}")
         self._redis_clients.clear()
+        if self._sync_redis_client:
+            try:
+                self._sync_redis_client.close()
+            except Exception as e:
+                logger.warning(f"关闭同步 Redis 客户端失败: {e}")
+            self._sync_redis_client = None
         
         # 关闭 Redis 连接池
         if self._redis_pool:

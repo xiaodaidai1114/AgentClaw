@@ -5,8 +5,8 @@ export function getModelType(model) {
 export function isConversationModel(model) {
   const modelType = getModelType(model)
   const modelId = String(model?.id || '').trim().toLowerCase()
-  if (['embedding', 'rerank'].includes(modelType)) return false
-  if (!modelType && /(embedding|rerank|reranker|重排|嵌入)/.test(modelId)) return false
+  if (['embedding', 'rerank', 'speech2text', 'tts'].includes(modelType)) return false
+  if (!modelType && /(embedding|rerank|reranker|speech2text|tts|重排|嵌入|语音)/.test(modelId)) return false
   return true
 }
 

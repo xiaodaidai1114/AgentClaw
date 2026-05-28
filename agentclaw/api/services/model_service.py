@@ -8,7 +8,7 @@ from agentclaw.logger.config import get_logger
 
 logger = get_logger(__name__)
 
-NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank"}
+NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank", "speech2text", "tts"}
 
 
 class ModelService:

@@ -100,11 +100,22 @@ def _result_from_state(state: dict[str, Any]) -> Any:
 
 
 
+def _fallback_reply_for_phase(phase: str) -> str:
+    if phase == "choose_type":
+        return "想玩什么类型？例如：悬疑、温情、反转、校园、科幻、职场、轻微诡异，或者你直接描述口味。"
+    if phase == "await_soup_confirmation":
+        return "这个候选汤面要使用吗？你可以回复“开始”“调整：...”或“重新生成”。"
+    if phase == "solved":
+        return "要开启下一轮吗？你可以说想玩的新类型，或回复“再来一题”。"
+    return "你可以继续提问、给出答案，或者说“给我一点提示”。"
+
+
 def _normalize_phase_result(raw: Any, previous_session: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
+        phase = previous_session.get("phase", "choose_type")
         return {
-            "reply": "我刚才没有整理好这轮状态。你可以重新说一次想玩的类型、提问、给出答案，或者要一个提示。",
-            "phase": previous_session.get("phase", "choose_type"),
+            "reply": _fallback_reply_for_phase(phase),
+            "phase": phase,
             "intent": "irrelevant_reply",
             "question_judgement": None,
             "session": previous_session,
@@ -130,7 +141,7 @@ def _normalize_phase_result(raw: Any, previous_session: dict[str, Any]) -> dict[
         intent = "question_judgement"
         reply = judgement
     if not reply:
-        reply = "你可以继续提问、给出答案，或者说“给我一点提示”。"
+        reply = _fallback_reply_for_phase(phase)
 
     return {
         "reply": reply,

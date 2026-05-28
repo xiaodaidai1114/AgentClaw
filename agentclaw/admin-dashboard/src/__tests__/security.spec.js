@@ -47,18 +47,23 @@ describe('dashboard security posture', () => {
     expect(configSource).toContain("workflowConfig.workflow.builtinPublicShareDisabled")
   })
 
-  it('passes the public share token through the public agent API calls', () => {
+  it('keeps the public share token on the public page URL for backend access checks', () => {
     const pageSource = readFileSync(resolve(process.cwd(), 'src/views/PublicAgent.vue'), 'utf8')
     const chatSource = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
     const apiSource = readFileSync(resolve(process.cwd(), 'src/api/index.js'), 'utf8')
 
     expect(pageSource).toContain(':share-token="shareToken"')
+    expect(pageSource).toContain("route.query.share_token || route.query.token")
+    expect(pageSource).not.toContain('router.replace')
+    expect(pageSource).not.toContain('shareTokenRef')
     expect(chatSource).toContain('shareToken: { type: String, default: \'\'}')
     expect(chatSource).toContain('publicWorkflowsApi.get(this.currentWorkflowId, this.shareToken)')
     expect(chatSource).toContain('publicWorkflowsApi.openSession(this.currentWorkflowId, this.shareToken)')
-    expect(chatSource).toContain('body.share_token = this.shareToken')
+    expect(chatSource).not.toContain('body.share_token = this.shareToken')
     expect(chatSource).toContain('this.convApi.create(this.currentWorkflowId, null, source, this.shareToken)')
-    expect(apiSource).toContain('share_token: shareToken')
+    expect(apiSource).toContain('publicShareTokenParams')
+    expect(apiSource).not.toContain('share_token: shareToken')
+    expect(apiSource).toContain('headers: publicSessionHeaders')
     expect(apiSource).toContain('/public/workflows/')
   })
 

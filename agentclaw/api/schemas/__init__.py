@@ -54,6 +54,11 @@ from agentclaw.api.schemas.model import (
     ModelUpdateRequest,
     ModelFallbackRequest,
 )
+from agentclaw.api.schemas.audio import (
+    SpeechToTextResponse,
+    TextToSpeechRequest,
+    VoiceInfo,
+)
 from agentclaw.api.schemas.dashboard import (
     DashboardStats,
     TracesSummary,
@@ -132,6 +137,10 @@ __all__ = [
     "ModelListResponse",
     "ModelUpdateRequest",
     "ModelFallbackRequest",
+    # Audio
+    "SpeechToTextResponse",
+    "TextToSpeechRequest",
+    "VoiceInfo",
     # Dashboard
     "DashboardStats",
     "TracesSummary",
