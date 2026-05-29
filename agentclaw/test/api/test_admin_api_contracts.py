@@ -341,6 +341,39 @@ def test_admin_settings_models_uses_service_dependency(admin_api_client, auth_to
     assert put_response.json()["hot_reloaded"] is True
 
 
+def test_admin_settings_maintenance_uses_service_dependency(admin_api_client, auth_tokens):
+    from agentclaw.api.routers.admin import settings as settings_router
+
+    class FakeSettingsService:
+        def get_maintenance(self):
+            return {"log_retention_days": 7, "checkpointer_retention_days": 30}
+
+        def update_maintenance(self, payload):
+            return {
+                "log_retention_days": payload["log_retention_days"],
+                "checkpointer_retention_days": payload["checkpointer_retention_days"],
+            }
+
+    admin_api_client.app.dependency_overrides[
+        settings_router.get_settings_service
+    ] = lambda: FakeSettingsService()
+
+    get_response = admin_api_client.get(
+        "/admin/settings/maintenance",
+        headers=auth_header(auth_tokens.admin),
+    )
+    put_response = admin_api_client.put(
+        "/admin/settings/maintenance",
+        headers=auth_header(auth_tokens.admin),
+        json={"log_retention_days": 14, "checkpointer_retention_days": 60},
+    )
+
+    assert get_response.status_code == 200
+    assert get_response.json() == {"log_retention_days": 7, "checkpointer_retention_days": 30}
+    assert put_response.status_code == 200
+    assert put_response.json() == {"log_retention_days": 14, "checkpointer_retention_days": 60}
+
+
 def test_admin_tasks_list_contract(admin_api_client, auth_tokens):
     response = admin_api_client.get(
         "/admin/tasks",

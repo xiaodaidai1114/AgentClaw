@@ -741,6 +741,49 @@ describe('AgentChat conversation runtime state', () => {
     ])
   })
 
+  it('preserves local messages when remote conversation list omits messages', async () => {
+    localStorage.clear()
+    localStorage.setItem('agent_conversations_workflow-1', JSON.stringify([
+      {
+        id: 'conv-lightweight',
+        title: 'Local',
+        messages: [
+          { role: 'user', content: 'start' },
+          { role: 'assistant', content: 'cached answer' },
+        ],
+        updated_at: 300,
+      },
+    ]))
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversations: [],
+      convApi: {
+        list: vi.fn(async () => ({
+          conversations: [
+            {
+              id: 'conv-lightweight',
+              title: 'Remote title',
+              updated_at: 400,
+            },
+          ],
+        })),
+      },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(ctx.conversations[0]).toMatchObject({
+      id: 'conv-lightweight',
+      title: 'Remote title',
+      updated_at: 400,
+    })
+    expect(ctx.conversations[0].messages).toEqual([
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: 'cached answer' },
+    ])
+  })
+
   it('persists streaming output as a draft assistant message before the workflow finishes', () => {
     localStorage.clear()
     const ctx = {

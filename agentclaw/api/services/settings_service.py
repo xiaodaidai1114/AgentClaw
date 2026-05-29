@@ -10,6 +10,7 @@ from typing import Any
 from agentclaw.logger.config import get_logger
 from agentclaw.memory import MEMORY_CHAR_LIMIT, read_workflow_memory, write_workflow_memory
 from agentclaw.node.types import ErrorStrategy
+from agentclaw.runtime.maintenance import normalize_retention_days
 
 logger = get_logger(__name__)
 GLOBAL_FIELDS = ("timeout", "recursion_limit", "max_tool_rounds", "max_context_messages", "tool_result_max_length", "max_message_length")
@@ -42,6 +43,7 @@ INFRA_FIELDS = {
     "auth": ("admin_token", "workflow_api_key"),
     "scheduler": ("enabled", "timezone", "max_workers", "coalesce", "max_instances"),
 }
+MAINTENANCE_FIELDS = ("log_retention_days", "checkpointer_retention_days")
 SECRET_MASKS = {"password", "admin_token", "workflow_api_key", "mcp_token", "minio_access_key", "minio_secret_key"}
 MODEL_REFERENCE_FIELDS = ("default", "fallback", "fast", "vision", "speech2text", "tts", "tts_voice")
 DEFAULT_CHAT_AUDIO_CONFIG = {
@@ -833,6 +835,7 @@ def apply_saved_system_settings(config: Any) -> None:
     store = _store_dir(config.project.project_dir)
     global_override = _load_json(store / "settings.global.json")
     infra_override = _load_json(store / "settings.infra.json")
+    maintenance_override = _load_json(store / "settings.maintenance.json")
     if not hasattr(config, "_settings_base_workflow"):
         config._settings_base_workflow = _pick(config.workflow, GLOBAL_FIELDS)
     merged_workflow = _merge(config._settings_base_workflow, global_override)
@@ -840,6 +843,12 @@ def apply_saved_system_settings(config: Any) -> None:
         setattr(config.workflow, key, value)
     for section, fields in INFRA_FIELDS.items():
         _apply_system_section(config, section, _prune(infra_override.get(section, {})))
+    if not hasattr(config, "maintenance") or config.maintenance is None:
+        from agentclaw.config import MaintenanceConfig
+        config.maintenance = MaintenanceConfig()
+    for key in MAINTENANCE_FIELDS:
+        if key in maintenance_override:
+            setattr(config.maintenance, key, normalize_retention_days(maintenance_override.get(key), 0))
 
 
 def apply_saved_workflow_settings(workflow: Any, project_dir: Path | None = None) -> None:
@@ -907,6 +916,13 @@ class SettingsService:
                 )
                 for name in INFRA_FIELDS
             },
+        }
+
+    def get_maintenance(self) -> dict[str, Any]:
+        maintenance = getattr(self._config, "maintenance", None)
+        return {
+            "log_retention_days": normalize_retention_days(getattr(maintenance, "log_retention_days", 0), 0),
+            "checkpointer_retention_days": normalize_retention_days(getattr(maintenance, "checkpointer_retention_days", 0), 0),
         }
 
     def get_env_reference(self) -> dict[str, Any]:
@@ -1017,6 +1033,15 @@ class SettingsService:
         _save_json(self._store / "settings.global.json", _prune(data))
         apply_saved_system_settings(self._config)
         return self.get_global()
+
+    def update_maintenance(self, data: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "log_retention_days": normalize_retention_days((data or {}).get("log_retention_days"), 0),
+            "checkpointer_retention_days": normalize_retention_days((data or {}).get("checkpointer_retention_days"), 0),
+        }
+        _save_json(self._store / "settings.maintenance.json", _prune(payload))
+        apply_saved_system_settings(self._config)
+        return self.get_maintenance()
 
     def get_infra(self, section: str) -> dict[str, Any]:
         return self.get_global()[section]

@@ -62,6 +62,29 @@
             </template>
           </n-card>
 
+          <n-card :title="t('settings.maintenance')" size="small" style="margin-bottom: 16px;">
+            <n-text depth="3" style="display: block; margin-bottom: 12px;">
+              {{ t('settings.maintenanceHint') }}
+            </n-text>
+            <n-form :model="maintenanceForm" label-placement="left" label-width="180" size="small">
+              <n-form-item :label="t('settingsForm.maintenance.logRetentionDays')">
+                <div class="form-control-row">
+                  <n-input-number v-model:value="maintenanceForm.log_retention_days" :min="0" :max="3650" class="form-input" />
+                  <n-text depth="3" class="form-hint">{{ t('settingsForm.maintenance.logRetentionHint') }}</n-text>
+                </div>
+              </n-form-item>
+              <n-form-item :label="t('settingsForm.maintenance.checkpointerRetentionDays')">
+                <div class="form-control-row">
+                  <n-input-number v-model:value="maintenanceForm.checkpointer_retention_days" :min="0" :max="3650" class="form-input" />
+                  <n-text depth="3" class="form-hint">{{ t('settingsForm.maintenance.checkpointerRetentionHint') }}</n-text>
+                </div>
+              </n-form-item>
+            </n-form>
+            <template #header-extra>
+              <n-button type="primary" size="small" @click="saveMaintenanceConfig" :disabled="!maintenanceChanged">{{ t('common.save') }}</n-button>
+            </template>
+          </n-card>
+
           <!-- 基础设施 -->
           <n-card :title="t('settings.infra')" size="small">
             <n-collapse>
@@ -709,6 +732,11 @@ const MOCK_GLOBAL = {
   max_message_length: 0,
 }
 
+const MOCK_MAINTENANCE = {
+  log_retention_days: 0,
+  checkpointer_retention_days: 0,
+}
+
 const MOCK_INFRA = {
   database: { host: '127.0.0.1', port: 5432, user: 'postgres', database: 'agentclaw', pool_min_size: 2, pool_max_size: 10 },
   redis: { host: '127.0.0.1', port: 6379, pool_max_connections: 20 },
@@ -722,9 +750,12 @@ const MOCK_INFRA = {
 // ============================================================
 const globalForm = ref({ ...MOCK_GLOBAL })
 const globalOriginal = ref({ ...MOCK_GLOBAL })
+const maintenanceForm = ref({ ...MOCK_MAINTENANCE })
+const maintenanceOriginal = ref({ ...MOCK_MAINTENANCE })
 const infraConfig = ref(JSON.parse(JSON.stringify(MOCK_INFRA)))
 
 const globalChanged = computed(() => JSON.stringify(globalForm.value) !== JSON.stringify(globalOriginal.value))
+const maintenanceChanged = computed(() => JSON.stringify(maintenanceForm.value) !== JSON.stringify(maintenanceOriginal.value))
 
 const envLoading = ref(false)
 const envSaving = ref(false)
@@ -778,6 +809,18 @@ function normalizeGlobalWorkflow(workflow = {}) {
   )
 }
 
+function normalizeMaintenanceValue(key, value) {
+  if (value === null || value === undefined || value === '') return MOCK_MAINTENANCE[key]
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : MOCK_MAINTENANCE[key]
+}
+
+function normalizeMaintenanceConfig(config = {}) {
+  return Object.fromEntries(
+    Object.keys(MOCK_MAINTENANCE).map(key => [key, normalizeMaintenanceValue(key, config?.[key])])
+  )
+}
+
 async function fetchGlobalConfig() {
   try {
     const res = await settingsApi.getGlobal()
@@ -793,12 +836,33 @@ async function fetchGlobalConfig() {
   }
 }
 
+async function fetchMaintenanceConfig() {
+  try {
+    const res = await settingsApi.getMaintenance()
+    maintenanceForm.value = normalizeMaintenanceConfig(res)
+    maintenanceOriginal.value = normalizeMaintenanceConfig(res)
+  } catch {
+    // 后端未实现，使用 mock
+  }
+}
+
 async function saveGlobalConfig() {
   try {
     const res = await settingsApi.updateGlobal(normalizeGlobalWorkflow(globalForm.value))
     globalForm.value = normalizeGlobalWorkflow(res.workflow)
     globalOriginal.value = normalizeGlobalWorkflow(res.workflow)
     message.success(t('settingsForm.messages.globalSaved'))
+  } catch {
+    message.warning(t('settingsForm.messages.backendNotPersisted'))
+  }
+}
+
+async function saveMaintenanceConfig() {
+  try {
+    const res = await settingsApi.updateMaintenance(normalizeMaintenanceConfig(maintenanceForm.value))
+    maintenanceForm.value = normalizeMaintenanceConfig(res)
+    maintenanceOriginal.value = normalizeMaintenanceConfig(res)
+    message.success(t('settingsForm.messages.maintenanceSaved'))
   } catch {
     message.warning(t('settingsForm.messages.backendNotPersisted'))
   }
@@ -1689,6 +1753,7 @@ async function fetchModels() {
 // ============================================================
 onMounted(() => {
   fetchGlobalConfig()
+  fetchMaintenanceConfig()
   fetchEnvConfig()
   fetchModels()
   fetchModelsConfig()

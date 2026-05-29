@@ -356,6 +356,29 @@ class SchedulerConfig:
 
 
 @dataclass
+class MaintenanceConfig:
+    """运行时维护配置。0 表示永久保留。"""
+    log_retention_days: int = 0
+    checkpointer_retention_days: int = 0
+
+    @classmethod
+    def from_env(cls) -> "MaintenanceConfig":
+        """从环境变量加载"""
+        return cls(
+            log_retention_days=_env_non_negative_int("AGENTCLAW_LOG_RETENTION_DAYS", 0),
+            checkpointer_retention_days=_env_non_negative_int("AGENTCLAW_CHECKPOINTER_RETENTION_DAYS", 0),
+        )
+
+
+def _env_non_negative_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+@dataclass
 class AgentClawConfig:
     """AgentClaw 全局配置"""
     database: Optional[DatabaseConfig] = None
@@ -366,6 +389,7 @@ class AgentClawConfig:
     knowledgebase: KnowledgeBaseConfig = field(default_factory=KnowledgeBaseConfig)
     project: ProjectConfig = field(default_factory=lambda: ProjectConfig.discover())
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
 
     _instance: Optional["AgentClawConfig"] = None
 
@@ -408,6 +432,7 @@ class AgentClawConfig:
             knowledgebase=KnowledgeBaseConfig.from_env(),
             project=ProjectConfig.discover(),
             scheduler=SchedulerConfig.from_env(),
+            maintenance=MaintenanceConfig.from_env(),
         )
 
         try:
@@ -462,6 +487,10 @@ class AgentClawConfig:
             "scheduler": {
                 "enabled": self.scheduler.enabled,
                 "timezone": self.scheduler.timezone,
+            },
+            "maintenance": {
+                "log_retention_days": self.maintenance.log_retention_days,
+                "checkpointer_retention_days": self.maintenance.checkpointer_retention_days,
             },
         }
 

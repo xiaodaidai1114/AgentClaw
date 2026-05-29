@@ -14,6 +14,7 @@ from agentclaw.database import get_database
 
 TTS_CACHE_TTL_SECONDS = 24 * 60 * 60
 MEMORY_TTS_CACHE_MAX_ITEMS = 128
+MEMORY_TTS_CACHE_MAX_BYTES = 16 * 1024 * 1024
 _memory_tts_cache: OrderedDict[str, str] = OrderedDict()
 
 
@@ -62,10 +63,19 @@ def get_memory_tts_cache(key: str) -> tuple[bytes, str] | None:
 
 
 def set_memory_tts_cache(key: str, value: str) -> None:
+    max_bytes = MEMORY_TTS_CACHE_MAX_BYTES
+    value_size = len(value.encode("utf-8"))
+    if value_size > max_bytes:
+        _memory_tts_cache.pop(key, None)
+        return
     _memory_tts_cache[key] = value
     _memory_tts_cache.move_to_end(key)
-    while len(_memory_tts_cache) > MEMORY_TTS_CACHE_MAX_ITEMS:
+    while len(_memory_tts_cache) > MEMORY_TTS_CACHE_MAX_ITEMS or _memory_tts_cache_size() > max_bytes:
         _memory_tts_cache.popitem(last=False)
+
+
+def _memory_tts_cache_size() -> int:
+    return sum(len(value.encode("utf-8")) for value in _memory_tts_cache.values())
 
 
 def get_redis_cache_db(database_getter=None):

@@ -62,6 +62,19 @@ async def update_global_settings(
     return service.update_global(payload)
 
 
+@router.get("/maintenance")
+async def get_maintenance_settings(service: SettingsService = Depends(get_settings_service)):
+    return service.get_maintenance()
+
+
+@router.put("/maintenance")
+async def update_maintenance_settings(
+    payload: dict[str, Any] = Body(default={}),
+    service: SettingsService = Depends(get_settings_service),
+):
+    return service.update_maintenance(payload)
+
+
 @router.get("/infra/{section}")
 async def get_infra_settings(
     section: str,

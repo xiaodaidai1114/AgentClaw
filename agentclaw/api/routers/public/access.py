@@ -50,6 +50,56 @@ _RATE_LIMIT_WINDOWS = {
 _rate_limit_lock = threading.Lock()
 _rate_limit_buckets: dict[tuple[str, str, str, str], deque[float]] = {}
 _conversation_quota_counts: dict[tuple[str, str, str], int] = {}
+_conversation_quota_updated: dict[tuple[str, str, str], float] = {}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, "").strip() or 0)
+    except ValueError:
+        value = 0
+    return value if value > 0 else default
+
+
+def _public_memory_rate_limit_max_keys() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MEMORY_RATE_LIMIT_MAX_KEYS", 10000)
+
+
+def _public_memory_rate_limit_ttl_seconds() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MEMORY_RATE_LIMIT_TTL_SECONDS", 24 * 60 * 60)
+
+
+def _public_memory_conversation_quota_ttl_seconds() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MEMORY_CONVERSATION_QUOTA_TTL_SECONDS", 24 * 60 * 60)
+
+
+def _public_memory_conversation_quota_max_keys() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MEMORY_CONVERSATION_QUOTA_MAX_KEYS", 10000)
+
+
+def _trim_rate_limit_buckets(now: float) -> None:
+    cutoff = now - _public_memory_rate_limit_ttl_seconds()
+    max_keys = _public_memory_rate_limit_max_keys()
+    for key in list(_rate_limit_buckets):
+        bucket = _rate_limit_buckets[key]
+        if not bucket or bucket[-1] <= cutoff:
+            _rate_limit_buckets.pop(key, None)
+    while len(_rate_limit_buckets) > max_keys:
+        _rate_limit_buckets.pop(next(iter(_rate_limit_buckets)), None)
+
+
+def _trim_conversation_quota_counts(now: float) -> None:
+    ttl = _public_memory_conversation_quota_ttl_seconds()
+    cutoff = now - ttl
+    for key, updated_at in list(_conversation_quota_updated.items()):
+        if updated_at <= cutoff:
+            _conversation_quota_updated.pop(key, None)
+            _conversation_quota_counts.pop(key, None)
+    max_keys = _public_memory_conversation_quota_max_keys()
+    while len(_conversation_quota_counts) > max_keys:
+        key = next(iter(_conversation_quota_counts))
+        _conversation_quota_counts.pop(key, None)
+        _conversation_quota_updated.pop(key, None)
 
 
 def trust_proxy_headers() -> bool:
@@ -212,6 +262,7 @@ def check_public_rate_limit(workflow: Any, workflow_id: str, request: Request, a
     now = time.monotonic()
     key = (workflow_id, action, _client_identity(request), _session_identity(request))
     with _rate_limit_lock:
+        _trim_rate_limit_buckets(now)
         bucket = _rate_limit_buckets.setdefault(key, deque())
         cutoff = now - parsed.window_seconds
         while bucket and bucket[0] <= cutoff:
@@ -220,6 +271,7 @@ def check_public_rate_limit(workflow: Any, workflow_id: str, request: Request, a
             retry_after = int(max(1, parsed.window_seconds - (now - bucket[0]))) if bucket else parsed.window_seconds
             return rate_limited_response(retry_after)
         bucket.append(now)
+        _trim_rate_limit_buckets(now)
     return None
 
 
@@ -306,7 +358,9 @@ def validate_public_message_quota(workflow: Any, messages: Optional[list[Any]]) 
 def check_public_conversation_quota(workflow: Any, workflow_id: str, request: Request) -> JSONResponse | None:
     key = (workflow_id, _client_identity(request), _session_identity(request))
     limit = public_conversation_limit(workflow)
+    now = time.monotonic()
     with _rate_limit_lock:
+        _trim_conversation_quota_counts(now)
         used = _conversation_quota_counts.get(key, 0)
         if used >= limit:
             return JSONResponse(
@@ -314,6 +368,8 @@ def check_public_conversation_quota(workflow: Any, workflow_id: str, request: Re
                 content={"error": "Public conversation quota exceeded", "code": "RATE_LIMITED"},
             )
         _conversation_quota_counts[key] = used + 1
+        _conversation_quota_updated[key] = now
+        _trim_conversation_quota_counts(now)
     return None
 
 
@@ -321,6 +377,7 @@ def reset_public_rate_limiter() -> None:
     with _rate_limit_lock:
         _rate_limit_buckets.clear()
         _conversation_quota_counts.clear()
+        _conversation_quota_updated.clear()
     try:
         from agentclaw.api.routers.public.session import reset_public_user_state
 

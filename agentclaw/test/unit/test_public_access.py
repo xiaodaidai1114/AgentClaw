@@ -115,3 +115,61 @@ def test_public_user_and_owner_fall_back_to_memory_when_redis_becomes_unavailabl
     assert public_session.public_owner_id_from_request(request) == owner_id
     assert public_session.verify_public_conversation_owner("wf", "conv", owner_id) is True
     assert public_session.verify_public_conversation_owner("wf", "conv", other_owner_id) is False
+
+
+def test_public_memory_rate_limit_fallback_is_bounded(monkeypatch):
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MEMORY_RATE_LIMIT_MAX_KEYS", "2")
+    public_access.reset_public_rate_limiter()
+    workflow = SimpleNamespace(rate_limit="10/min")
+
+    for index in range(3):
+        request = SimpleNamespace(
+            headers={},
+            cookies={PUBLIC_SESSION_COOKIE: f"session-{index}"},
+            client=SimpleNamespace(host=f"127.0.0.{index}"),
+        )
+
+        assert public_access.check_public_rate_limit(workflow, "wf", request, "run") is None
+
+    assert len(public_access._rate_limit_buckets) <= 2
+
+
+def test_public_memory_conversation_quota_fallback_expires_and_is_bounded(monkeypatch):
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MEMORY_CONVERSATION_QUOTA_TTL_SECONDS", "1")
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MEMORY_CONVERSATION_QUOTA_MAX_KEYS", "2")
+    public_access.reset_public_rate_limiter()
+    workflow = SimpleNamespace(public_conversation_limit=10)
+    now = 1000.0
+    monkeypatch.setattr(public_access.time, "monotonic", lambda: now)
+
+    expired_request = SimpleNamespace(headers={}, cookies={PUBLIC_SESSION_COOKIE: "old"}, client=SimpleNamespace(host="old"))
+    assert public_access.check_public_conversation_quota(workflow, "wf", expired_request) is None
+
+    now = 1003.0
+    for index in range(3):
+        request = SimpleNamespace(
+            headers={},
+            cookies={PUBLIC_SESSION_COOKIE: f"session-{index}"},
+            client=SimpleNamespace(host=f"10.0.0.{index}"),
+        )
+
+        assert public_access.check_public_conversation_quota(workflow, "wf", request) is None
+
+    assert len(public_access._conversation_quota_counts) <= 2
+    assert all(key[1] != "old" for key in public_access._conversation_quota_counts)
+
+
+def test_public_user_and_owner_memory_fallback_is_bounded(monkeypatch):
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_MEMORY_SESSION_MAX_KEYS", "1")
+    monkeypatch.setattr(public_session, "_redis_client", lambda: None)
+    public_session.reset_public_user_state()
+
+    public_session._register_public_user("pu_1")
+    public_session._register_public_user("pu_2")
+    owner_1 = public_session.public_owner_id_from_user_id("pu_1")
+    owner_2 = public_session.public_owner_id_from_user_id("pu_2")
+    assert public_session.bind_public_conversation_owner("wf", "conv-1", owner_1) is True
+    assert public_session.bind_public_conversation_owner("wf", "conv-2", owner_2) is True
+
+    assert len(public_session._public_users) <= 1
+    assert len(public_session._public_conversation_owners) <= 1

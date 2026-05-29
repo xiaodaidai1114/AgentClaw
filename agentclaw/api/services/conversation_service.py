@@ -83,6 +83,9 @@ class ConversationService:
                 ALTER TABLE agent_conversations ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100);
             """)
             await pool.execute("""
+                ALTER TABLE agent_conversations ADD COLUMN IF NOT EXISTS checkpoint_expired_at BIGINT;
+            """)
+            await pool.execute("""
                 CREATE INDEX IF NOT EXISTS idx_agent_conv_source ON agent_conversations(source);
             """)
         except Exception:
@@ -126,6 +129,7 @@ class ConversationService:
         conv.setdefault("owner_id", None)
         conv.setdefault("user_id", None)
         conv.setdefault("tenant_id", None)
+        conv.setdefault("checkpoint_expired_at", None)
         return conv
 
     # ---- CRUD ----
@@ -137,6 +141,7 @@ class ConversationService:
         owner_id: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
+        include_messages: bool = False,
     ) -> Dict[str, Any]:
         pool = await self._get_pool()
         if not pool:
@@ -157,10 +162,12 @@ class ConversationService:
             """, *params)
             total = total_row["cnt"] if total_row else 0
 
+            message_field = "messages," if include_messages else ""
             rows = await pool.fetch(f"""
-                SELECT id, workflow_id, title, messages,
+                SELECT id, workflow_id, title, {message_field}
                        COALESCE(source, 'admin') as source,
                        owner_id, user_id, tenant_id,
+                       checkpoint_expired_at,
                        created_at, updated_at
                 FROM agent_conversations
                 WHERE {where}
@@ -168,8 +175,12 @@ class ConversationService:
                 LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
             """, *params, page_size, offset)
 
+            conversations = [self._parse_row(r) for r in rows]
+            if not include_messages:
+                for conv in conversations:
+                    conv.pop("messages", None)
             return {
-                "conversations": [self._parse_row(r) for r in rows],
+                "conversations": conversations,
                 "total": total,
                 "page": page,
                 "page_size": page_size,
@@ -200,6 +211,7 @@ class ConversationService:
             "owner_id": owner_id,
             "user_id": user_id,
             "tenant_id": tenant_id,
+            "checkpoint_expired_at": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -247,6 +259,7 @@ class ConversationService:
                 SELECT id, workflow_id, title, messages,
                        COALESCE(source, 'admin') as source,
                        owner_id, user_id, tenant_id,
+                       checkpoint_expired_at,
                        created_at, updated_at
                 FROM agent_conversations
                 WHERE {where}
@@ -309,6 +322,7 @@ class ConversationService:
             RETURNING id, workflow_id, title, messages,
                       COALESCE(source, 'admin') as source,
                       owner_id, user_id, tenant_id,
+                      checkpoint_expired_at,
                       created_at, updated_at
         """
 
@@ -349,6 +363,38 @@ class ConversationService:
             return _delete_result_deleted(status)
         except Exception as e:
             logger.warning(f"Failed to delete conversation: {e}")
+            return False
+
+    async def is_checkpoint_expired(
+        self,
+        workflow_id: str,
+        conversation_id: str,
+        source: Optional[str] = None,
+        owner_id: Optional[str] = None,
+    ) -> bool:
+        pool = await self._get_pool()
+        if not pool:
+            return False
+
+        await self._ensure_table()
+        where = "id = $1 AND workflow_id = $2"
+        params: list[Any] = [conversation_id, workflow_id]
+        if source is not None:
+            where += f" AND COALESCE(source, 'admin') = ${len(params) + 1}"
+            params.append(source)
+        if owner_id is not None:
+            where += f" AND owner_id = ${len(params) + 1}"
+            params.append(owner_id)
+
+        try:
+            row = await pool.fetchrow(f"""
+                SELECT checkpoint_expired_at
+                FROM agent_conversations
+                WHERE {where}
+            """, *params)
+            return bool(row and row.get("checkpoint_expired_at"))
+        except Exception as e:
+            logger.warning(f"Failed to check checkpoint expiration: {e}")
             return False
 
     # ---- Feedback ----

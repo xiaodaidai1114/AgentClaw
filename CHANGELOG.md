@@ -11,7 +11,8 @@ All notable changes to AgentClaw will be documented in this file.
 - 新增 Dashboard 聊天语音能力，支持工作流级 ASR/TTS 开关、浏览器录音转写、助手消息手动播放语音，以及 Admin/Public 两套音频 API。
 - 新增音频服务与 provider registry，提供 OpenAI 兼容 ASR/TTS 适配，并让 `DocumentNode` 可对音频文件调用 ASR 后注入文本内容。
 - Dashboard 模型配置支持维护 `speech2text` / `tts` 模型类型，并可配置默认 ASR 模型、默认 TTS 模型、TTS 声音、音频格式和 ASR 支持的音频后缀。
-- 新增 ASR/TTS 云端适配设计文档和基础实施计划，覆盖音频 provider 抽象、模型配置格式、Workflow 聊天语音开关、Public Agent 音频安全边界和实施批次。
+- Settings 新增“日志与存储”配置，可分别设置执行日志保留天数和 LangGraph checkpointer 有效天数；`0` 表示永久保留，也可通过 `AGENTCLAW_LOG_RETENTION_DAYS` / `AGENTCLAW_CHECKPOINTER_RETENTION_DAYS` 配置。
+- 新增后台维护清理任务：执行日志 TTL 只清理 trace、节点和 LLM 日志；checkpointer TTL 按对话最新 checkpoint 活动判断是否过期，并为活跃对话压缩旧 checkpoint 历史。
 
 **Changed**
 
@@ -25,17 +26,24 @@ All notable changes to AgentClaw will be documented in this file.
 - 海龟汤主持人在选型、确认汤面、已结束等阶段收到无关内容时，会返回阶段相关引导，避免游戏开始前误判为提问结论。
 - 模型配置弹窗按模型类型区分渠道：chat 模型保留 chat 渠道，ASR/TTS 模型使用独立音频渠道，`embedding` / `rerank` 模型不再显示或保存 `channel`。
 - 会话模型选择器和模型服务将 ASR/TTS 与 embedding/rerank 一样视为非对话模型，避免被选为默认聊天、快速、降级或视觉模型。
-- 重新构建 Dashboard `dist` 产物，使公开分享会话、聊天语音、模型配置和版本更新进入运行包。
+- 会话列表接口默认不再返回完整消息历史，前端会保留本地更完整的消息快照，降低最近会话列表的数据库读取和网络传输成本。
+- Public Agent 内存 fallback 状态增加容量和 TTL 裁剪，覆盖匿名用户、会话归属、限流桶和会话配额，避免无 Redis 部署时内存长期增长。
+- TTS 内存缓存增加字节上限，避免较大语音结果在内存中无限积累。
+- Dashboard 静态 hash 资源改为长期 immutable 缓存，减少重复访问时的网络传输和服务端静态文件压力。
+- 移除已转化为实现的临时 ASR/TTS 设计与实施计划文档，避免发布包中保留过期计划说明。
+- 重新构建 Dashboard `dist` 产物，使公开分享会话、聊天语音、模型配置、日志与存储配置和版本更新进入运行包。
 
 **Fixed**
 
 - 修复 public share token 中包含非 ASCII 字符时 `secrets.compare_digest()` 抛出 `TypeError` 并导致 500 的问题，现在会统一按 UTF-8 bytes 做常量时间比较。
 - 修复公开分享页可通过 `/dashboard/agent/<任意 id>?conversation_id=...` 绕过分享 token 直接访问对应智能体的问题。
 - 修复公开分享页删除会话失败、最近会话缺失，以及打开分享链接时短暂闪现 Dashboard 主页的问题。
+- 修复已清理 checkpoint 的旧对话可能被静默当作空状态继续运行的问题；现在会返回 `410 CHECKPOINT_EXPIRED`。
+- 修复远端会话列表为减载省略 `messages` 时，前端可能用轻量记录覆盖本地完整消息的问题。
 
 **Tests**
 
-- 新增/扩展公开访问、公开执行、公开会话、部署安全配置、Public Agent 工具策略、上传限制、会话服务、海龟汤模板、Admin/Public 音频 API、音频服务、DocumentNode ASR、工作流聊天语音、Settings 模型配置和 Dashboard 前端回归测试。
+- 新增/扩展公开访问、公开执行、公开会话、部署安全配置、Public Agent 工具策略、上传限制、会话服务、海龟汤模板、Admin/Public 音频 API、音频服务、DocumentNode ASR、工作流聊天语音、Settings 模型配置、Settings 日志与存储配置、维护清理服务、Dashboard 静态资源缓存和 Dashboard 前端回归测试。
 
 ## [1.0.9] - 2026-05-22
 

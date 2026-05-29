@@ -720,7 +720,61 @@ def test_anonymous_public_workflow_run_rejects_builtin_workflow_before_execution
     )
 
     assert response.status_code == 404
-    assert response.json()["code"] == "WORKFLOW_NOT_FOUND"
+
+
+def test_public_workflow_run_rejects_checkpoint_expired_conversation(
+    public_api_client,
+    monkeypatch,
+    auth_tokens,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.routers.public.session import public_owner_id_from_user_id
+    from agentclaw.api.routers.public import session as public_session
+    from agentclaw.api.services import conversation_service
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        public_conversation_limit = 10
+        public_message_limit = 100
+        rate_limit = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            raise AssertionError("expired checkpoint conversations must not run")
+
+    class FakeConversationService:
+        async def is_checkpoint_expired(self, workflow_id, conversation_id, source=None, owner_id=None):
+            return True
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(conversation_service, "get_conversation_service", lambda: FakeConversationService())
+
+    session = _open_public_session(public_api_client, "wf-public")
+    public_user_cookie = session.cookies.get(public_session.PUBLIC_USER_COOKIE)
+    public_user_id = public_session.public_user_id_from_cookie(public_user_cookie)
+    owner_id = public_owner_id_from_user_id(public_user_id)
+    public_session.bind_public_conversation_owner("wf-public", "conv-expired", owner_id)
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json={
+            "conversation_id": "conv-expired",
+            "user": "hello public",
+            "inputs": {"question": "hello public"},
+        },
+    )
+
+    assert response.status_code == 410
+    assert response.json()["code"] == "CHECKPOINT_EXPIRED"
 
 
 def test_anonymous_public_workflow_requires_explicit_publish_and_share_token(

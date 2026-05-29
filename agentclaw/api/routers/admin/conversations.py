@@ -29,6 +29,7 @@ async def list_conversations(
     source: str = Query("admin", description="Source filter: admin or public"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    include_messages: bool = Query(False, description="Include full message history in list results"),
     service: ConversationService = Depends(get_conversation_service),
 ) -> dict:
     """List conversations for a workflow, filtered by source."""
@@ -37,6 +38,7 @@ async def list_conversations(
         source=source,
         page=page,
         page_size=page_size,
+        include_messages=include_messages,
     )
     return result
 

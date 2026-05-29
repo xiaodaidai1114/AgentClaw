@@ -835,6 +835,21 @@ class AgentClawServer:
             init_file_storage(db)
             logger.info("文件存储服务已初始化")
 
+            if db and db.pg_pool and (
+                getattr(config.maintenance, "log_retention_days", 0) > 0
+                or getattr(config.maintenance, "checkpointer_retention_days", 0) > 0
+            ):
+                from agentclaw.runtime.maintenance import retention_loop
+
+                app.state.maintenance_retention_task = asyncio.create_task(
+                    retention_loop(config=config, db=db)
+                )
+                logger.info(
+                    "维护清理任务已启动: log_retention_days=%s, checkpointer_retention_days=%s",
+                    config.maintenance.log_retention_days,
+                    config.maintenance.checkpointer_retention_days,
+                )
+
             # 初始化知识库服务
             try:
                 if config.knowledgebase.enabled and db and db.pg_pool:
@@ -956,6 +971,14 @@ class AgentClawServer:
 
         @app.on_event("shutdown")
         async def shutdown_event():
+            retention_task = getattr(app.state, "maintenance_retention_task", None)
+            if retention_task:
+                retention_task.cancel()
+                try:
+                    await retention_task
+                except asyncio.CancelledError:
+                    pass
+
             # 停止 Channel 适配器
             try:
                 from agentclaw.channels.routes import _channel_manager
@@ -1520,12 +1543,14 @@ class AgentClawServer:
         from fastapi.staticfiles import StaticFiles
         from fastapi.responses import FileResponse, RedirectResponse
 
-        class NoCacheStaticFiles(StaticFiles):
+        class CachedAssetStaticFiles(StaticFiles):
             def file_response(self, full_path, stat_result, scope, status_code=200):
                 response = super().file_response(full_path, stat_result, scope, status_code)
-                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-                response.headers["Pragma"] = "no-cache"
-                response.headers["Expires"] = "0"
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                if "Pragma" in response.headers:
+                    del response.headers["Pragma"]
+                if "Expires" in response.headers:
+                    del response.headers["Expires"]
                 return response
         
         dashboard_path = Path(self.admin_dashboard_dir)
@@ -1538,7 +1563,7 @@ class AgentClawServer:
         # 挂载静态资源（JS、CSS、图片等）
         assets_path = dist_path / "assets"
         if assets_path.exists():
-            app.mount("/dashboard/assets", NoCacheStaticFiles(directory=str(assets_path)), name="dashboard-assets")
+            app.mount("/dashboard/assets", CachedAssetStaticFiles(directory=str(assets_path)), name="dashboard-assets")
         
         # 根路径重定向到 Dashboard
         @app.get("/")

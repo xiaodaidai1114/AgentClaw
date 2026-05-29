@@ -29,6 +29,33 @@ _public_users: dict[str, float] = {}
 _public_conversation_owners: dict[tuple[str, str], tuple[str, float]] = {}
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, "").strip() or 0)
+    except ValueError:
+        value = 0
+    return value if value > 0 else default
+
+
+def _public_memory_session_max_keys() -> int:
+    return _env_int("AGENTCLAW_PUBLIC_MEMORY_SESSION_MAX_KEYS", 10000)
+
+
+def _trim_public_memory_state(now: float) -> None:
+    for user_id, expires_at in list(_public_users.items()):
+        if expires_at <= now:
+            _public_users.pop(user_id, None)
+    for key, value in list(_public_conversation_owners.items()):
+        if value[1] <= now:
+            _public_conversation_owners.pop(key, None)
+
+    max_keys = _public_memory_session_max_keys()
+    while len(_public_users) > max_keys:
+        _public_users.pop(next(iter(_public_users)), None)
+    while len(_public_conversation_owners) > max_keys:
+        _public_conversation_owners.pop(next(iter(_public_conversation_owners)), None)
+
+
 def request_origin(request: Request) -> str:
     forwarded_proto = request.headers.get("x-forwarded-proto") if trust_proxy_headers() else None
     forwarded_host = request.headers.get("x-forwarded-host") if trust_proxy_headers() else None
@@ -156,7 +183,9 @@ def _register_public_user(user_id: str, ttl_seconds: int | None = None) -> None:
         except Exception:
             pass
     with _public_user_lock:
+        _trim_public_memory_state(_time.time())
         _public_users[user_id] = expires_at
+        _trim_public_memory_state(_time.time())
 
 
 def _public_user_is_registered(user_id: str) -> bool:
@@ -170,6 +199,7 @@ def _public_user_is_registered(user_id: str) -> bool:
         except Exception:
             pass
     with _public_user_lock:
+        _trim_public_memory_state(_time.time())
         expires_at = _public_users.get(user_id)
         if not expires_at:
             return False
@@ -231,10 +261,12 @@ def bind_public_conversation_owner(
             pass
     memory_key = (workflow_id, conversation_id)
     with _public_user_lock:
+        _trim_public_memory_state(_time.time())
         existing = _public_conversation_owners.get(memory_key)
         if existing and existing[1] > _time.time() and existing[0] != owner_id:
             return False
         _public_conversation_owners[memory_key] = (owner_id, expires_at)
+        _trim_public_memory_state(_time.time())
     return True
 
 
@@ -257,6 +289,7 @@ def verify_public_conversation_owner(
             pass
     memory_key = (workflow_id, conversation_id)
     with _public_user_lock:
+        _trim_public_memory_state(_time.time())
         existing = _public_conversation_owners.get(memory_key)
         if not existing:
             return True

@@ -1168,6 +1168,16 @@ export default {
       return Object.keys(errors).length === 0
     },
     async loadConversations() {
+      const mergeConversationRecord = (existing, incoming) => {
+        if (!existing) return incoming
+        const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
+        const hasIncomingMessages = Array.isArray(incoming?.messages)
+        const incomingMessages = hasIncomingMessages ? incoming.messages : []
+        const messages = hasIncomingMessages && incomingMessages.length > existingMessages.length
+          ? incomingMessages
+          : existingMessages
+        return { ...existing, ...incoming, messages }
+      }
       const keyPrefix = this.isPublicMode ? 'public_conv_' : 'agent_conversations_'
       const key = `${keyPrefix}${this.currentWorkflowId}`
       const stored = localStorage.getItem(key)
@@ -1185,7 +1195,7 @@ export default {
           const res = await this.convApi.list(this.currentWorkflowId, 50, 'public')
           const apiConvs = res.conversations || []
           const merged = []
-          for (const conv of [...apiConvs, ...localConvs]) {
+          for (const conv of [...localConvs, ...apiConvs]) {
             if (!conv?.id) continue
             const existingIndex = merged.findIndex(item => item.id === conv.id)
             if (existingIndex < 0) {
@@ -1193,11 +1203,7 @@ export default {
               continue
             }
             const existing = merged[existingIndex]
-            const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
-            const incomingMessages = Array.isArray(conv.messages) ? conv.messages : []
-            if (incomingMessages.length > existingMessages.length) {
-              merged[existingIndex] = conv
-            }
+            merged[existingIndex] = mergeConversationRecord(existing, conv)
           }
           merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
           this.conversations = merged
@@ -1212,7 +1218,7 @@ export default {
         const res = await this.convApi.list(this.currentWorkflowId, 50, source)
         const apiConvs = res.conversations || []
         const merged = []
-        for (const conv of [...apiConvs, ...localConvs]) {
+        for (const conv of [...localConvs, ...apiConvs]) {
           if (!conv?.id) continue
           const existingIndex = merged.findIndex(item => item.id === conv.id)
           if (existingIndex < 0) {
@@ -1220,11 +1226,7 @@ export default {
             continue
           }
           const existing = merged[existingIndex]
-          const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
-          const incomingMessages = Array.isArray(conv.messages) ? conv.messages : []
-          if (incomingMessages.length > existingMessages.length) {
-            merged[existingIndex] = conv
-          }
+          merged[existingIndex] = mergeConversationRecord(existing, conv)
         }
         merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
         this.conversations = merged

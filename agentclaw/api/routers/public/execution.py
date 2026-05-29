@@ -277,6 +277,27 @@ def _public_file_payload_error(
     return None
 
 
+async def _is_checkpoint_expired(
+    workflow_id: str,
+    conversation_id: str,
+    *,
+    source: Optional[str],
+    owner_id: Optional[str],
+) -> bool:
+    try:
+        from agentclaw.api.services.conversation_service import get_conversation_service
+
+        return await get_conversation_service().is_checkpoint_expired(
+            workflow_id,
+            conversation_id,
+            source=source,
+            owner_id=owner_id,
+        )
+    except Exception as exc:
+        logger.warning(f"检查 conversation checkpoint 过期状态失败: {exc}")
+        return False
+
+
 @router.get(
     "/workflows",
     summary="List workflows",
@@ -501,6 +522,27 @@ async def _run_workflow_request(
                 content={"error": "Conversation not found", "code": ErrorCode.NOT_FOUND},
             )
         bind_public_conversation_owner(workflow_id, thread_id, owner_id)
+        checkpoint_expired = await _is_checkpoint_expired(
+            workflow_id,
+            thread_id,
+            source="public",
+            owner_id=owner_id,
+        )
+    else:
+        checkpoint_expired = await _is_checkpoint_expired(
+            workflow_id,
+            thread_id,
+            source="admin",
+            owner_id=None,
+        )
+    if checkpoint_expired:
+        return JSONResponse(
+            status_code=410,
+            content={
+                "error": "Conversation checkpoint expired",
+                "code": "CHECKPOINT_EXPIRED",
+            },
+        )
     input_data = body.get("inputs")
     if input_data is None:
         input_data = body.get("input_data")
