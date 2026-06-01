@@ -450,6 +450,25 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.$router.replace).toHaveBeenCalledWith({ query: {} })
   })
 
+  it('starts a new admin conversation when the routed conversation is missing remotely', async () => {
+    const ctx = makeMountedCtx({
+      $route: {
+        params: { id: 'turtle_soup' },
+        query: { conversation_id: 'conv-old' },
+      },
+      loadConversation: vi.fn(async () => false),
+      newConversation: vi.fn(async function () {
+        this.conversationId = 'conv-new'
+      }),
+    })
+
+    await AgentChat.mounted.call(ctx)
+
+    expect(ctx.loadConversation).toHaveBeenCalledWith('conv-old')
+    expect(ctx.newConversation).toHaveBeenCalledOnce()
+    expect(ctx.conversationId).toBe('conv-new')
+  })
+
   it('allows no-input workflows to show a standalone start action', () => {
     const ctx = {
       workflowLoadError: '',
@@ -782,6 +801,26 @@ describe('AgentChat conversation runtime state', () => {
       { role: 'user', content: 'start' },
       { role: 'assistant', content: 'cached answer' },
     ])
+  })
+
+  it('drops local-only admin conversations when the server list succeeds', async () => {
+    localStorage.clear()
+    localStorage.setItem('agent_conversations_workflow-1', JSON.stringify([
+      { id: 'conv-old-local', title: 'Old local', messages: [], updated_at: 300 },
+    ]))
+    const ctx = {
+      isPublicMode: false,
+      currentWorkflowId: 'workflow-1',
+      conversations: [],
+      convApi: {
+        list: vi.fn(async () => ({ conversations: [] })),
+      },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(ctx.conversations).toEqual([])
+    expect(JSON.parse(localStorage.getItem('agent_conversations_workflow-1'))).toEqual([])
   })
 
   it('persists streaming output as a draft assistant message before the workflow finishes', () => {
@@ -1232,7 +1271,7 @@ describe('AgentChat conversation runtime state', () => {
     expect(JSON.parse(options.body).files).toBeUndefined()
   })
 
-  it('keeps anonymous public conversation lists scoped to local storage', async () => {
+  it('drops local-only public conversations when the server list succeeds', async () => {
     const remoteList = vi.fn(async () => ({
       conversations: [
         { id: 'conv-remote', title: 'Remote public', messages: [], updated_at: 30 },
@@ -1252,7 +1291,8 @@ describe('AgentChat conversation runtime state', () => {
     await AgentChat.methods.loadConversations.call(ctx)
 
     expect(remoteList).toHaveBeenCalledWith('workflow-1', 50, 'public')
-    expect(ctx.conversations.map(c => c.id)).toEqual(['conv-remote', 'conv-local'])
+    expect(ctx.conversations.map(c => c.id)).toEqual(['conv-remote'])
+    expect(JSON.parse(localStorage.getItem('public_conv_workflow-1')).map(c => c.id)).toEqual(['conv-remote'])
   })
 
   it('opens the public session before loading public conversations', async () => {
@@ -1354,7 +1394,7 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.conversationId).toBeUndefined()
   })
 
-  it('keeps a routed admin conversation id when the remote conversation is missing', async () => {
+  it('does not create a local admin conversation when the remote conversation is missing', async () => {
     const remoteGet = vi.fn(async () => {
       const error = new Error('Conversation not found')
       error.response = { status: 404 }
@@ -1383,12 +1423,13 @@ describe('AgentChat conversation runtime state', () => {
       saveConversationsToLocal: vi.fn(),
     }
 
-    await AgentChat.methods.loadConversation.call(ctx, 'conv-local')
+    const loaded = await AgentChat.methods.loadConversation.call(ctx, 'conv-local')
 
     expect(remoteGet).toHaveBeenCalledWith('__builtin__', 'conv-local', undefined)
-    expect(ctx.conversationId).toBe('conv-local')
-    expect(ctx.conversations[0]).toMatchObject({ id: 'conv-local', messages: [] })
-    expect(ctx.saveConversationsToLocal).toHaveBeenCalled()
+    expect(loaded).toBe(false)
+    expect(ctx.conversationId).toBeUndefined()
+    expect(ctx.conversations).toEqual([])
+    expect(ctx.saveConversationsToLocal).not.toHaveBeenCalled()
   })
 
   it('restores a stable conversation id before starting a workflow run', async () => {

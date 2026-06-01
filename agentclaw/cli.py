@@ -12,8 +12,9 @@ import sys
 import socket
 import time
 import shutil
+import subprocess
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional
 
 from .platform_compat import apply_windows_selector_event_loop_policy
 
@@ -113,11 +114,14 @@ def _build_default_env_content(
     admin_token: Optional[str] = None,
     workflow_api_key: Optional[str] = None,
     mcp_token: Optional[str] = None,
+    overrides: Optional[Mapping[str, str]] = None,
 ) -> str:
-    admin_token = admin_token or _generate_admin_token()
-    workflow_api_key = workflow_api_key or _generate_workflow_api_key()
-    mcp_token = mcp_token or _generate_mcp_token()
+    env_overrides = {key: value for key, value in dict(overrides or {}).items() if value != ""}
+    admin_token = admin_token or env_overrides.get("ADMIN_TOKEN") or _generate_admin_token()
+    workflow_api_key = workflow_api_key or env_overrides.get("WORKFLOW_API_KEY") or _generate_workflow_api_key()
+    mcp_token = mcp_token or env_overrides.get("MCP_TOKEN") or _generate_mcp_token()
     overrides = {
+        **env_overrides,
         "ADMIN_TOKEN": admin_token,
         "WORKFLOW_API_KEY": workflow_api_key,
         "MCP_TOKEN": mcp_token,
@@ -320,7 +324,7 @@ def serve(port: Optional[int], host: Optional[str], project_dir: str, workers: i
     server.run()
 
 
-def _init_project(project_path: Path, silent: bool = False):
+def _init_project(project_path: Path, silent: bool = False, create_env: bool = True):
     """创建项目脚手架文件（供 init 和 setup 共用）"""
     # 创建 agents 目录
     agents_dir = project_path / "agents"
@@ -350,7 +354,8 @@ def _init_project(project_path: Path, silent: bool = False):
         if not silent:
             click.echo(f"✅ 创建模型配置: {models_json}")
 
-    _ensure_default_env(project_path, silent=silent)
+    if create_env:
+        _ensure_default_env(project_path, silent=silent)
 
     mcp_json = project_path / "mcp.json"
     if not mcp_json.exists():
@@ -430,7 +435,6 @@ def _docker_compose_command(compose_file: Path) -> list[str]:
 
 def _docker_available() -> bool:
     """检测 Docker 是否可用"""
-    import subprocess
     try:
         result = subprocess.run(
             ["docker", "compose", "version"],
@@ -441,16 +445,55 @@ def _docker_available() -> bool:
         return False
 
 
-def _start_infra(compose_file: Path) -> bool:
-    """启动 Docker 基础设施，返回是否成功"""
-    import subprocess
+def _docker_daemon_accessible() -> tuple[bool, str]:
+    """检测当前用户是否能访问 Docker daemon。"""
+    try:
+        result = subprocess.run(
+            ["docker", "ps"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except FileNotFoundError:
+        return False, "Docker 命令不存在，请先安装 Docker。"
+    except subprocess.TimeoutExpired:
+        return False, "Docker daemon 响应超时，请检查 Docker 服务状态。"
 
-    click.echo("🐳 启动基础设施 (PostgreSQL + Redis + Milvus + Adminer)...")
-    command = [*_docker_compose_command(compose_file), "up", "-d", "--wait"]
+    if result.returncode == 0:
+        return True, ""
+
+    error = (result.stderr or result.stdout or "").strip()
+    if "permission denied" in error.lower() and "/var/run/docker.sock" in error:
+        return (
+            False,
+            "当前用户无法访问 Docker daemon。请将当前用户加入 docker 组后重新登录，例如：\n"
+            "   sudo usermod -aG docker $USER\n"
+            "   newgrp docker\n"
+            "也可以先用 sudo docker ps 验证 Docker 本身是否正常。\n"
+            "不建议使用 sudo agentclaw up；sudo 环境通常找不到虚拟环境中的 agentclaw，"
+            "并且会让项目文件、日志和缓存变成 root 权限。",
+        )
+    return False, error or "无法访问 Docker daemon，请检查 Docker 服务状态。"
+
+
+def _docker_compose_services(vector_backend: str = "milvus") -> list[str]:
+    """返回 docker compose up 要显式启动的服务；空列表表示启动全部服务。"""
+    if vector_backend == "milvus-lite":
+        return ["postgres", "redis", "adminer"]
+    return []
+
+
+def _start_infra(compose_file: Path, vector_backend: str = "milvus") -> bool:
+    """启动 Docker 基础设施，返回是否成功"""
+
+    services = _docker_compose_services(vector_backend)
+    label = "PostgreSQL + Redis + Adminer" if vector_backend == "milvus-lite" else "PostgreSQL + Redis + Milvus + Adminer"
+    click.echo(f"🐳 启动基础设施 ({label})...")
+    command = [*_docker_compose_command(compose_file), "up", "-d", "--wait", *services]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0 and "unknown flag" in (result.stderr or "").lower():
         result = subprocess.run(
-            [*_docker_compose_command(compose_file), "up", "-d"],
+            [*_docker_compose_command(compose_file), "up", "-d", *services],
             capture_output=True, text=True,
         )
     if result.returncode != 0:
@@ -460,12 +503,15 @@ def _start_infra(compose_file: Path) -> bool:
                 click.echo(f"   {line}", err=True)
         return False
 
-    if not _wait_for_docker_host_ports():
+    if not _wait_for_docker_host_ports(vector_backend=vector_backend):
         return False
 
     click.echo(f"   ✅ PostgreSQL 已可连接 (localhost:{_get_int_env('PG_PORT', 5432)})")
     click.echo(f"   ✅ Redis 已可连接 (localhost:{_get_int_env('REDIS_PORT', 6379)})")
-    click.echo(f"   ✅ Milvus 已可连接 (localhost:{_get_int_env('MILVUS_PORT', 19530)})")
+    if vector_backend != "milvus-lite":
+        click.echo(f"   ✅ Milvus 已可连接 (localhost:{_get_int_env('MILVUS_PORT', 19530)})")
+    else:
+        click.echo("   ✅ Milvus Lite 将由知识库服务在本地文件中自动初始化")
     click.echo(f"   ✅ Adminer 已启动 (localhost:{_get_int_env('ADMINER_PORT', 8080)})")
     return True
 
@@ -502,27 +548,29 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
-def _docker_host_checks() -> tuple[tuple[str, str, int, Callable[[str, int], bool]], ...]:
+def _docker_host_checks(vector_backend: str = "milvus") -> tuple[tuple[str, str, int, Callable[[str, int], bool]], ...]:
     """Docker 基础设施暴露到宿主机后的可用性检查。"""
-    return (
+    checks = [
         ("PostgreSQL", "127.0.0.1", _get_int_env("PG_PORT", 5432), _can_connect_tcp),
         ("Redis", "127.0.0.1", _get_int_env("REDIS_PORT", 6379), _can_ping_redis),
-        ("Milvus", "127.0.0.1", _get_int_env("MILVUS_PORT", 19530), _can_connect_tcp),
-    )
+    ]
+    if vector_backend != "milvus-lite":
+        checks.append(("Milvus", "127.0.0.1", _get_int_env("MILVUS_PORT", 19530), _can_connect_tcp))
+    return tuple(checks)
 
 
-def _wait_for_docker_host_ports(timeout: float = 20.0) -> bool:
+def _wait_for_docker_host_ports(timeout: float = 20.0, vector_backend: str = "milvus") -> bool:
     """等待 Docker 暴露到宿主机的 PG/Redis/Milvus 端口可用。"""
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
-        if all(check(host, port) for _, host, port, check in _docker_host_checks()):
+        if all(check(host, port) for _, host, port, check in _docker_host_checks(vector_backend)):
             return True
         time.sleep(0.5)
 
     unavailable = [
         f"{label} {host}:{port}"
-        for label, host, port, check in _docker_host_checks()
+        for label, host, port, check in _docker_host_checks(vector_backend)
         if not check(host, port)
     ]
     click.secho("⚠️  Docker 容器已启动，但宿主机端口仍不可连接:", fg="yellow", err=True)
@@ -533,9 +581,8 @@ def _wait_for_docker_host_ports(timeout: float = 20.0) -> bool:
     return False
 
 
-def _docker_infra_running(compose_file: Path) -> bool:
+def _docker_infra_running(compose_file: Path, vector_backend: str = "milvus") -> bool:
     """检测内置 Docker 基础设施是否已运行"""
-    import subprocess
 
     result = subprocess.run(
         [*_docker_compose_command(compose_file), "ps", "--status", "running", "--services"],
@@ -545,19 +592,16 @@ def _docker_infra_running(compose_file: Path) -> bool:
     if result.returncode != 0:
         return False
     running = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-    return {"postgres", "redis", "milvus"}.issubset(running) and _wait_for_docker_host_ports(timeout=3.0)
+    required = {"postgres", "redis"} if vector_backend == "milvus-lite" else {"postgres", "redis", "milvus"}
+    return required.issubset(running) and _wait_for_docker_host_ports(timeout=3.0, vector_backend=vector_backend)
 
 
-def _docker_env_vars() -> dict:
+def _docker_env_vars(vector_backend: str = "milvus") -> dict:
     """Docker 默认基础设施环境变量；已有进程环境变量优先。"""
     pg_port = os.getenv("PG_PORT", "").strip() or "5432"
     redis_port = os.getenv("REDIS_PORT", "").strip() or "6379"
-    minio_api_port = os.getenv("MINIO_API_PORT", "").strip() or "9000"
-    minio_console_port = os.getenv("MINIO_CONSOLE_PORT", "").strip() or "9001"
-    milvus_port = os.getenv("MILVUS_PORT", "").strip() or "19530"
-    milvus_http_port = os.getenv("MILVUS_HTTP_PORT", "").strip() or "9091"
     adminer_port = os.getenv("ADMINER_PORT", "").strip() or "8080"
-    return {
+    env_vars = {
         "PG_HOST": "127.0.0.1",
         "PG_PORT": pg_port,
         "PG_USER": "postgres",
@@ -565,13 +609,21 @@ def _docker_env_vars() -> dict:
         "PG_DATABASE": "agentclaw",
         "REDIS_HOST": "127.0.0.1",
         "REDIS_PORT": redis_port,
-        "MINIO_API_PORT": minio_api_port,
-        "MINIO_CONSOLE_PORT": minio_console_port,
-        "MILVUS_PORT": milvus_port,
-        "MILVUS_HTTP_PORT": milvus_http_port,
         "ADMINER_PORT": adminer_port,
-        "MILVUS_URI": f"http://127.0.0.1:{milvus_port}",
     }
+    if vector_backend != "milvus-lite":
+        minio_api_port = os.getenv("MINIO_API_PORT", "").strip() or "9000"
+        minio_console_port = os.getenv("MINIO_CONSOLE_PORT", "").strip() or "9001"
+        milvus_port = os.getenv("MILVUS_PORT", "").strip() or "19530"
+        milvus_http_port = os.getenv("MILVUS_HTTP_PORT", "").strip() or "9091"
+        env_vars.update({
+            "MINIO_API_PORT": minio_api_port,
+            "MINIO_CONSOLE_PORT": minio_console_port,
+            "MILVUS_PORT": milvus_port,
+            "MILVUS_HTTP_PORT": milvus_http_port,
+            "MILVUS_URI": f"http://127.0.0.1:{milvus_port}",
+        })
+    return env_vars
 
 
 def _warn_docker_env_overrides(env_vars: dict) -> None:
@@ -627,6 +679,31 @@ def _select_up_mode(mode: Optional[str]) -> str:
     )
     selected = "docker" if choice == "1" else "remote"
     click.secho(f"✓ 已选择: {'Docker 本地基础设施' if selected == 'docker' else 'Remote 远程环境'}", fg="green")
+    return selected
+
+
+def _select_vector_backend(vector_backend: Optional[str], *, interactive: bool) -> str:
+    """选择 Docker 模式使用完整 Milvus 还是 Milvus Lite。"""
+    if vector_backend:
+        return vector_backend
+    if not interactive:
+        return "milvus"
+
+    _echo_up_section("向量存储", "选择知识库向量数据的存储方式。")
+    click.secho("  1) Milvus Docker", fg="green", bold=True)
+    click.echo("     启动完整 Milvus Standalone，适合生产预演、较大知识库和跨进程稳定服务。")
+    click.secho("  2) Milvus Lite", fg="blue", bold=True)
+    click.echo("     不启动 Milvus Docker；由本地文件 milvus.db 存储向量，资源占用更低。")
+    click.echo("")
+    choice = click.prompt(
+        "请输入选项",
+        type=click.Choice(["1", "2"]),
+        default="1",
+        show_choices=False,
+    )
+    selected = "milvus" if choice == "1" else "milvus-lite"
+    label = "Milvus Docker" if selected == "milvus" else "Milvus Lite"
+    click.secho(f"✓ 已选择: {label}", fg="green")
     return selected
 
 
@@ -692,6 +769,36 @@ def _upsert_env_file(project_path: Path, env_vars: dict, section_title: str, ove
             lines.append(f"{key}={env_vars[key]}")
 
     env_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _write_initial_up_env_file(project_path: Path, env_vars: dict) -> None:
+    """为 agentclaw up 初始化项目写入 .env；已有文件只补齐缺失配置。"""
+    env_file = project_path / ".env"
+    if env_file.exists():
+        _upsert_env_file(project_path, env_vars, "AgentClaw up 自动配置")
+        return
+    env_file.write_text(_build_default_env_content(overrides=env_vars), encoding="utf-8")
+
+
+def _activate_milvus_lite_env(project_path: Path) -> None:
+    """清空完整 Milvus 连接配置，确保本次启动使用本地 Milvus Lite。"""
+    os.environ.pop("MILVUS_URI", None)
+    env_file = project_path / ".env"
+    if not env_file.exists():
+        return
+
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    changed = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key == "MILVUS_URI" and stripped.split("=", 1)[1].strip():
+            lines[index] = "MILVUS_URI="
+            changed = True
+    if changed:
+        env_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def _configured_data_dir_needs_sync(project_path: Path, mode: str) -> bool:
@@ -863,7 +970,7 @@ def _prepare_project_for_up(project_dir: str, mode: str) -> tuple[Path, bool]:
 
     project_path.mkdir(parents=True, exist_ok=True)
     click.secho(f"📁 初始化 AgentClaw 项目: {project_path}", fg="cyan")
-    _init_project(project_path)
+    _init_project(project_path, create_env=False)
     click.secho("✓ 项目初始化完成", fg="green")
     return project_path, True
 
@@ -921,18 +1028,37 @@ def _start_agentclaw_server(project_path: Path, port: Optional[int], host: Optio
     default=None,
     help="跳过交互选择，直接指定启动模式：docker=自动托管 PG/Redis/Milvus，remote=使用远程环境",
 )
-def up(port: Optional[int], host: Optional[str], project_dir: str, workers: int, reload: bool, mode: Optional[str]):
+@click.option(
+    "--vector-backend",
+    type=click.Choice(["milvus", "milvus-lite"]),
+    default=None,
+    help="Docker 模式下选择向量存储：milvus=启动完整 Milvus，milvus-lite=使用本地 Milvus Lite",
+)
+def up(
+    port: Optional[int],
+    host: Optional[str],
+    project_dir: str,
+    workers: int,
+    reload: bool,
+    mode: Optional[str],
+    vector_backend: Optional[str],
+):
     """启动 AgentClaw 项目（交互选择 Docker 或 Remote 模式）"""
+    mode_was_explicit = mode is not None
     mode = _select_up_mode(mode)
     project_path, initialized = _prepare_project_for_up(project_dir, mode)
+    if mode == "docker":
+        vector_backend = _select_vector_backend(vector_backend, interactive=not mode_was_explicit)
+    else:
+        vector_backend = "milvus"
 
     if initialized:
         env_vars = _prompt_runtime_secrets(project_path)
         if mode == "docker":
-            env_vars.update(_docker_env_vars())
+            env_vars.update(_docker_env_vars(vector_backend=vector_backend))
         else:
             env_vars.update(_prompt_remote_env_vars())
-        _upsert_env_file(project_path, env_vars, "AgentClaw up 自动配置")
+        _write_initial_up_env_file(project_path, env_vars)
         _apply_env_vars(env_vars)
 
     data_dir_env_vars = _prompt_data_dir_env_vars(project_path, mode)
@@ -941,6 +1067,8 @@ def up(port: Optional[int], host: Optional[str], project_dir: str, workers: int,
         _upsert_env_file(project_path, data_dir_env_vars, "AgentClaw 数据目录", overwrite=True)
         _apply_env_vars(data_dir_env_vars, override=True)
 
+    if mode == "docker" and vector_backend == "milvus-lite":
+        _activate_milvus_lite_env(project_path)
     _load_project_env(project_path)
 
     if mode == "docker":
@@ -948,16 +1076,23 @@ def up(port: Optional[int], host: Optional[str], project_dir: str, workers: int,
             click.echo("❌ Docker 不可用，无法使用 docker 启动模式", err=True)
             click.echo("   可安装 Docker 后重试，或使用: agentclaw up --mode remote", err=True)
             sys.exit(1)
+        daemon_ok, daemon_error = _docker_daemon_accessible()
+        if not daemon_ok:
+            click.echo("❌ Docker daemon 不可访问，无法使用 docker 启动模式", err=True)
+            for line in daemon_error.splitlines():
+                click.echo(f"   {line}", err=True)
+            sys.exit(1)
 
-        _echo_up_section("Docker 基础设施", "检查 PostgreSQL / Redis / Milvus / Adminer 是否已经运行。")
+        infra_label = "PostgreSQL / Redis / Adminer" if vector_backend == "milvus-lite" else "PostgreSQL / Redis / Milvus / Adminer"
+        _echo_up_section("Docker 基础设施", f"检查 {infra_label} 是否已经运行。")
         compose_file = _get_compose_file()
-        docker_env_vars = _docker_env_vars()
+        docker_env_vars = _docker_env_vars(vector_backend=vector_backend)
         _warn_docker_env_overrides(docker_env_vars)
         _upsert_env_file(project_path, docker_env_vars, "AgentClaw Docker 基础设施")
         _apply_env_vars(docker_env_vars)
-        if _docker_infra_running(compose_file):
+        if _docker_infra_running(compose_file, vector_backend=vector_backend):
             click.secho("✓ Docker 基础设施已运行，跳过 docker compose up", fg="green")
-        elif not _start_infra(compose_file):
+        elif not _start_infra(compose_file, vector_backend=vector_backend):
             sys.exit(1)
     else:
         _echo_up_section("Remote 环境", "不会启动 Docker，将使用当前 .env / 环境变量中的 PG、Redis 配置。")

@@ -707,7 +707,11 @@ export default {
       if (this.workflowLoadError) {
         this.conversationId = ''
       } else if (convId && (!this.isPublicMode || hasKnownPublicConversation)) {
-        await this.loadConversation(convId)
+        const loaded = await this.loadConversation(convId)
+        if (!loaded) {
+          if (this.conversations.length > 0) await this.loadConversation(this.conversations[0].id)
+          else await this.newConversation()
+        }
       } else if (convId && this.isPublicMode) {
         await this.newConversation()
       } else if (seedInput) {
@@ -1178,6 +1182,21 @@ export default {
           : existingMessages
         return { ...existing, ...incoming, messages }
       }
+      const mergeServerConversationList = (apiConvs, localConvs) => {
+        const localById = new Map(localConvs.filter(item => item?.id).map(item => [item.id, item]))
+        const merged = []
+        for (const conv of apiConvs || []) {
+          if (!conv?.id) continue
+          const existingIndex = merged.findIndex(item => item.id === conv.id)
+          if (existingIndex < 0) {
+            merged.push(mergeConversationRecord(localById.get(conv.id), conv))
+            continue
+          }
+          merged[existingIndex] = mergeConversationRecord(merged[existingIndex], conv)
+        }
+        merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
+        return merged
+      }
       const keyPrefix = this.isPublicMode ? 'public_conv_' : 'agent_conversations_'
       const key = `${keyPrefix}${this.currentWorkflowId}`
       const stored = localStorage.getItem(key)
@@ -1194,18 +1213,7 @@ export default {
         try {
           const res = await this.convApi.list(this.currentWorkflowId, 50, 'public')
           const apiConvs = res.conversations || []
-          const merged = []
-          for (const conv of [...localConvs, ...apiConvs]) {
-            if (!conv?.id) continue
-            const existingIndex = merged.findIndex(item => item.id === conv.id)
-            if (existingIndex < 0) {
-              merged.push(conv)
-              continue
-            }
-            const existing = merged[existingIndex]
-            merged[existingIndex] = mergeConversationRecord(existing, conv)
-          }
-          merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
+          const merged = mergeServerConversationList(apiConvs, localConvs)
           this.conversations = merged
           localStorage.setItem(key, JSON.stringify(merged))
         } catch (error) {
@@ -1217,18 +1225,7 @@ export default {
       try {
         const res = await this.convApi.list(this.currentWorkflowId, 50, source)
         const apiConvs = res.conversations || []
-        const merged = []
-        for (const conv of [...localConvs, ...apiConvs]) {
-          if (!conv?.id) continue
-          const existingIndex = merged.findIndex(item => item.id === conv.id)
-          if (existingIndex < 0) {
-            merged.push(conv)
-            continue
-          }
-          const existing = merged[existingIndex]
-          merged[existingIndex] = mergeConversationRecord(existing, conv)
-        }
-        merged.sort((a, b) => (b.updated_at || b.created_at || 0) - (a.updated_at || a.created_at || 0))
+        const merged = mergeServerConversationList(apiConvs, localConvs)
         this.conversations = merged
         localStorage.setItem(key, JSON.stringify(merged))
       } catch (error) { this.conversations = localConvs }
@@ -1415,10 +1412,11 @@ export default {
         } else {
           syncRouteConversationId(this, convId)
         }
-        return
+        return true
       }
       const loadSeq = ++this.conversationLoadSeq
       this.attachedFiles = []; this.showAllMessages = false; this.resetConversationRuntimeState()
+      let loaded = false
       const applyConversation = (conv) => {
         if (loadSeq !== this.conversationLoadSeq || this.isStreaming) return false
         this.conversationId = conv.id
@@ -1430,25 +1428,27 @@ export default {
       }
       const conv = this.conversations.find(c => c.id === convId)
       if (conv) {
-        applyConversation(conv)
+        loaded = applyConversation(conv)
       } else if (this.isPublicMode) {
-        return
+        return false
       } else {
         try {
           const apiConv = await this.convApi.get(this.currentWorkflowId, convId, this.shareToken)
-          applyConversation(apiConv)
+          loaded = applyConversation(apiConv)
         } catch (error) {
+          if (error?.response?.status === 404) return false
           console.error('加载会话失败:', error)
           const localConv = ensureLocalConversation(this, convId)
-          applyConversation(localConv)
+          loaded = applyConversation(localConv)
         }
       }
-      if (loadSeq !== this.conversationLoadSeq || this.isStreaming) return
+      if (!loaded || loadSeq !== this.conversationLoadSeq || this.isStreaming) return false
       // 同步 conversation_id 到 URL，刷新页面后可恢复
       syncRouteConversationId(this, convId)
       const attachedRun = typeof this.attachActiveRun === 'function' ? this.attachActiveRun(convId) : false
       // 恢复中断状态：检查最后一条消息是否有 pendingApproval
       if (!attachedRun) this.restoreInterruptState()
+      return true
     },
     async deleteConversation(convId) {
       this.deleteConversationDialog = { visible: true, conversationId: convId }

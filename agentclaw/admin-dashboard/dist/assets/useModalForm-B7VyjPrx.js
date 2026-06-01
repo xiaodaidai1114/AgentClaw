@@ -1,1 +1,0 @@
-import{au as c,r as n}from"./index-B1diF-_w.js";function l(a){const e=n(!1),t=n(!1),s=c({...a()});function o(){Object.assign(s,a()),t.value=!1,e.value=!0}function r(i){Object.assign(s,i),t.value=!0,e.value=!0}function u(){e.value=!1}return{visible:e,isEdit:t,form:s,openCreate:o,openEdit:r,close:u}}export{l as u};

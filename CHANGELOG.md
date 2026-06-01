@@ -2,6 +2,27 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.1.1] - 2026-06-01
+
+**Added**
+
+- `agentclaw up` 的 Docker 模式新增向量存储选择，支持完整 Milvus Docker 与低资源 Milvus Lite 两种路径；也可通过 `--vector-backend milvus|milvus-lite` 非交互指定。
+
+**Changed**
+
+- `agentclaw up` 自动初始化项目时延迟写入 `.env`，先让用户配置 `ADMIN_TOKEN`、`WORKFLOW_API_KEY` 和 `MCP_TOKEN`，再生成完整默认环境模板，避免默认密钥抢先占位。
+- Milvus Lite 模式只启动 PostgreSQL、Redis 和 Adminer，不再启动或等待完整 Milvus；选择 Milvus Lite 时会清空旧 `MILVUS_URI`，确保使用本地 Milvus Lite 文件后端。
+- Dashboard 会话列表在后端成功返回时以数据库会话 ID 为准，本地缓存仅补同 ID 会话的消息快照；换库或清库后，本地孤儿会话不会再被合入列表。
+
+**Fixed**
+
+- 修复当前用户无 Docker daemon 权限时，`agentclaw up` 仍进入 `docker compose up` 并报 `unable to get image ... permission denied` 的问题；现在会在启动 compose 前拦截并提示加入 docker 组。
+- 修复 Docker 权限提示容易误导用户尝试 `sudo agentclaw up` 的问题；提示中明确说明不建议用 sudo 启动 AgentClaw，以免 root PATH 找不到命令或生成 root 权限文件。
+
+**Tests**
+
+- 新增/扩展 `agentclaw up` 初始化、Docker daemon 权限、Milvus Lite、Dashboard 会话列表缓存清理和 Public Agent 最近会话回归测试，并重新构建 Dashboard `dist` 产物。
+
 ## [1.1.0] - 2026-05-29
 
 **Added**
