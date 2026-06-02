@@ -4,7 +4,6 @@
 提供定时任务的 CRUD REST API。
 """
 
-import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -12,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from agentclaw.api.auth.dependencies import require_admin_auth
 from agentclaw.logger.config import get_logger
+from agentclaw.utils.security import safe_compare_digest
 from agentclaw.scheduler.models import (
     CreateJobRequest,
     JobExecutionListResponse,
@@ -286,7 +286,7 @@ async def webhook_trigger(job_id: str, request: Request):
         )
 
     provided_secret = request.headers.get("X-Webhook-Secret", "")
-    if not secrets.compare_digest(provided_secret, job.webhook.secret):
+    if not safe_compare_digest(provided_secret, job.webhook.secret):
         return JSONResponse(
             status_code=403,
             content={"error": "Invalid webhook secret", "code": "FORBIDDEN"},

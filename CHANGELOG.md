@@ -2,6 +2,27 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.1.2] - 2026-06-01
+
+**Changed**
+
+- Public Agent 分享页首次读取 `share_token` 后会从 URL 清理该参数，后续公开 workflow、conversation 和 audio 请求改用 `X-AgentClaw-Share-Token` header 传递分享令牌，后端保留 query/body 兼容。
+- Public Agent 未配置工作流级 `rate_limit` 时默认启用 `30/min` 公开入口限流，可通过 `AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT` 覆盖；新增 `AGENTCLAW_PUBLIC_COOKIE_SECURE` 用于显式控制公开匿名 cookie 的 Secure 属性。
+- `public-chat` Dashboard 模式只服务 `/dashboard/agent/...` 分享页路径，不再服务旧 `/dashboard/workflows/.../chat` 或其他 Dashboard 路径。
+- Dashboard 手机端默认收起主导航、最近会话、参数配置等侧栏内容，改为通过顶部按钮打开主导航抽屉、最近会话抽屉、配置面板和管理端模型选择，并使用动态视口与安全区适配减少小屏溢出。
+- Dashboard 管理页补充手机端显示适配：渠道配置、仪表盘、智能体详情、执行追踪列表和追踪详情在窄屏下会让筛选栏、分页、表格、JSON 内容、长 ID 和详情抽屉换行、全宽显示或在局部区域内滚动，减少页面内容溢出。
+
+**Fixed**
+
+- 修复公开工作流运行时直接使用外部 `conversation_id` 作为 LangGraph/checkpointer `thread_id` 的隔离风险；现在 public runtime thread 会按 `workflow_id + owner_id + conversation_id` 派生，API 响应仍保留原始会话 ID。
+- 修复鉴权 token、public share token、文件签名、MCP token、Scheduler webhook 和 Channel webhook 等常量时间比较在收到非 ASCII 字符串时可能抛 `TypeError` 并返回 500 的问题。
+- 修复全局未捕获异常响应会回显内部异常文本的问题；现在 500 响应只返回通用错误码和通用错误文案，完整 traceback 仅写入服务端日志。
+- 修复反向代理 HTTPS 场景下 Public Agent 匿名用户 cookie 和 public session cookie 的 Secure 判断无法使用可信 `X-Forwarded-Proto` 的问题。
+
+**Tests**
+
+- 新增/扩展公开入口限流、分享 token header 传递、public runtime thread 隔离、cookie Secure 策略、非 ASCII token 比较、全局异常响应、手机端 Public Agent UX 和 Dashboard 管理页响应式回归测试，并重新构建 Dashboard `dist` 产物。
+
 ## [1.1.1] - 2026-06-01
 
 **Added**

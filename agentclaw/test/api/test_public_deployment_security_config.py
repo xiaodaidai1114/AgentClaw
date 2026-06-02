@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -86,10 +87,12 @@ def test_dashboard_public_chat_mode_only_serves_chat_spa_paths(monkeypatch, tmp_
 
     client = TestClient(server.app)
 
-    chat = client.get("/dashboard/workflows/wf-1/chat")
+    chat = client.get("/dashboard/agent/wf-1")
+    legacy_chat = client.get("/dashboard/workflows/wf-1/chat")
     settings = client.get("/dashboard/settings")
 
     assert chat.status_code == 200
+    assert legacy_chat.status_code == 404
     assert settings.status_code == 404
 
 
@@ -101,3 +104,26 @@ def test_server_cors_env_overrides_default_origins(monkeypatch):
     server = AgentClawServer(enable_admin=False)
 
     assert server.cors_origins == ["https://a.example", "https://b.example"]
+
+
+def test_global_exception_handler_does_not_return_exception_message(monkeypatch):
+    from agentclaw.api.server import AgentClawServer
+
+    server = AgentClawServer(enable_admin=False)
+    app = FastAPI()
+    server._register_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("secret internal detail")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/boom")
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload == {
+        "error": "服务器内部错误",
+        "code": "UNKNOWN_ERROR",
+    }
+    assert "secret internal detail" not in response.text

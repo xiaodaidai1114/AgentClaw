@@ -465,6 +465,8 @@ function truncateName(name) {
 
 <style scoped>
 .workflow-graph-container {
+  width: 100%;
+  min-width: 0;
   background: #fafafa;
   border-radius: 8px;
   padding: 16px;
@@ -476,6 +478,7 @@ function truncateName(name) {
 
 .workflow-svg {
   display: block;
+  flex: 0 0 auto;
 }
 
 /* 边样式 */
@@ -573,6 +576,7 @@ function truncateName(name) {
 /* 图例 */
 .graph-legend {
   display: flex;
+  max-width: 100%;
   gap: 16px;
   margin-top: 16px;
   padding-top: 12px;
@@ -587,6 +591,7 @@ function truncateName(name) {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .dot {
@@ -606,4 +611,16 @@ function truncateName(name) {
 .edge-legend.normal { color: #999; }
 .edge-legend.conditional { color: #1890ff; }
 .edge-legend.back { color: #ff7875; }
+
+@media (max-width: 640px) {
+  .workflow-graph-container {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .graph-legend {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+}
 </style>

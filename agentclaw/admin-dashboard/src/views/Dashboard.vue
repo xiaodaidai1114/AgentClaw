@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="dashboard-page">
     <PageHeader
       :title="t('dashboard.title')"
       :show-time-selector="currentTab === 'overview'"
@@ -11,7 +11,7 @@
     <n-tabs :value="currentTab" type="line" animated style="margin-bottom: 16px;" @update:value="handleTabChange">
       <n-tab-pane name="overview" :tab="t('dashboard.overview')">
         <div class="overview-toolbar">
-          <n-space justify="space-between" align="center">
+          <n-space class="overview-toolbar-space" justify="space-between" align="center">
             <n-text depth="3">{{ t('dashboard.statsScope') }}</n-text>
             <n-select
               v-model:value="agentScope"
@@ -52,14 +52,18 @@
               {{ tab.label }}
             </button>
           </div>
-          <n-data-table :columns="workflowColumns" :data="pagedWorkflows" :bordered="false" size="small" />
+          <div class="table-scroll">
+            <n-data-table :columns="workflowColumns" :data="pagedWorkflows" :bordered="false" size="small" scroll-x="max-content" />
+          </div>
         </n-card>
 
         <n-card :title="t('dashboard.recentRuns')" size="small">
           <template #header-extra>
             <n-button text type="primary" @click="router.push('/dashboard?tab=traces')">{{ t('common.viewAll') }}</n-button>
           </template>
-          <n-data-table :columns="traceColumns" :data="recentTraces" :bordered="false" size="small" />
+          <div class="table-scroll">
+            <n-data-table :columns="traceColumns" :data="recentTraces" :bordered="false" size="small" scroll-x="max-content" />
+          </div>
         </n-card>
       </n-tab-pane>
       <n-tab-pane name="traces" :tab="t('dashboard.traces')">
@@ -335,6 +339,21 @@ onMounted(fetchData)
   margin-bottom: 16px;
 }
 
+.dashboard-page {
+  min-width: 0;
+}
+
+.overview-toolbar-space {
+  width: 100%;
+  min-width: 0;
+}
+
+.table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .workflow-page-tabs {
   display: flex;
   align-items: center;
@@ -383,6 +402,21 @@ onMounted(fetchData)
 @media (max-width: 640px) {
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .overview-toolbar-space {
+    align-items: stretch !important;
+  }
+
+  .overview-toolbar-space :deep(.n-text) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .overview-toolbar-space :deep(.n-select) {
+    width: 100% !important;
   }
 }
 </style>

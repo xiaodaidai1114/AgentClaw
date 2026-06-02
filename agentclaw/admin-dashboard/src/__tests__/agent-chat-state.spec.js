@@ -1257,9 +1257,10 @@ describe('AgentChat conversation runtime state', () => {
     }
 
     const [url, options] = fetchCalls[0]
-    expect(url).toBe('/api/public/workflows/workflow-1/run?share_token=share-token')
+    expect(url).toBe('/api/public/workflows/workflow-1/run')
     expect(options.headers.Authorization).toBeUndefined()
     expect(options.headers['X-AgentClaw-Public-Session']).toBe('1')
+    expect(options.headers['X-AgentClaw-Share-Token']).toBe('share-token')
     expect(options.credentials).toBe('same-origin')
     expect(ctx.ensurePublicSession).toHaveBeenCalledOnce()
     expect(JSON.parse(options.body)).toMatchObject({

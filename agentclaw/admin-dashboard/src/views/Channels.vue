@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="channels-page">
     <PageHeader :title="t('channels.title')">
       <template #actions>
         <n-button v-if="currentTab === 'config'" type="primary" @click="openCreate" size="small">+ {{ t('channels.create') }}</n-button>
@@ -15,15 +15,17 @@
           <n-card size="small"><n-statistic :label="t('channels.types')" :value="typeCount" /></n-card>
         </div>
 
-        <n-card size="small" style="margin-bottom: 16px;">
-          <n-space :size="12" align="center">
+        <n-card class="channel-filter-card" size="small" style="margin-bottom: 16px;">
+          <n-space class="channel-filter-space" :size="12" align="center">
             <n-input v-model:value="searchText" :placeholder="t('channels.searchPlaceholder')" clearable style="width: 280px;" size="small" />
             <n-select v-model:value="filterType" :options="typeFilterOptions" :placeholder="t('channels.allTypes')" clearable style="width: 140px;" size="small" />
           </n-space>
         </n-card>
 
-        <n-card>
-          <n-data-table :columns="columns" :data="filteredChannels" :loading="loading" :bordered="false" :row-key="r => r.id" size="small" />
+        <n-card class="table-card">
+          <div class="table-scroll">
+            <n-data-table :columns="columns" :data="filteredChannels" :loading="loading" :bordered="false" :row-key="r => r.id" size="small" scroll-x="max-content" />
+          </div>
         </n-card>
       </n-tab-pane>
       <n-tab-pane name="logs" :tab="t('channels.logs')">
@@ -78,7 +80,7 @@
         <template v-if="modal.isEdit.value && supportsWebhook(modal.form.type)">
           <n-divider style="margin: 8px 0 16px;">{{ t('channels.webhookInfo') }}</n-divider>
           <n-form-item :label="t('channels.fields.address')">
-            <n-space align="center" :wrap="false" style="width: 100%;">
+            <n-space class="webhook-row" align="center" style="width: 100%;">
               <n-text code style="font-size: 12px;">{{ webhookUrl(modal.form.name) }}</n-text>
               <n-button text size="small" @click="copyWebhook(modal.form.name)">{{ $t('common.copy') }}</n-button>
             </n-space>
@@ -418,6 +420,35 @@ onMounted(fetchChannels)
   gap: 16px;
 }
 
+.channels-page {
+  min-width: 0;
+}
+
+.channel-filter-card,
+.table-card {
+  min-width: 0;
+}
+
+.channel-filter-space {
+  min-width: 0;
+}
+
+.table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.webhook-row {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.webhook-row :deep(.n-text) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1200px) {
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -427,6 +458,17 @@ onMounted(fetchChannels)
 @media (max-width: 640px) {
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .channel-filter-space {
+    width: 100%;
+  }
+
+  .channel-filter-space :deep(.n-input),
+  .channel-filter-space :deep(.n-select) {
+    width: 100% !important;
   }
 }
 </style>

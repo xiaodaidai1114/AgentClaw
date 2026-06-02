@@ -34,6 +34,8 @@ from agentclaw.api.routers.public.session import (
     ensure_public_user_id,
     is_same_origin_public_page_request,
     public_owner_id_from_request,
+    public_runtime_thread_id,
+    public_cookie_secure,
     set_public_user_cookie,
     verify_public_conversation_owner,
     verify_public_page_session,
@@ -391,7 +393,7 @@ async def open_public_workflow_session(workflow_id: str, request: Request):
         max_age=PUBLIC_SESSION_TTL_SECONDS,
         httponly=True,
         samesite="strict",
-        secure=request.url.scheme == "https",
+        secure=public_cookie_secure(request),
         path="/api",
     )
     set_public_user_cookie(response, request, public_user_id)
@@ -514,6 +516,8 @@ async def _run_workflow_request(
 
     response_mode = body.get("response_mode") or body.get("mode", "blocking")
     thread_id = body.get("conversation_id") or str(uuid.uuid4())
+    response_conversation_id = thread_id
+    runtime_thread_id = thread_id
     if public_mode:
         owner_id = public_owner_id_from_request(request)
         if not verify_public_conversation_owner(workflow_id, thread_id, owner_id):
@@ -522,6 +526,7 @@ async def _run_workflow_request(
                 content={"error": "Conversation not found", "code": ErrorCode.NOT_FOUND},
             )
         bind_public_conversation_owner(workflow_id, thread_id, owner_id)
+        runtime_thread_id = public_runtime_thread_id(workflow_id, owner_id, thread_id)
         checkpoint_expired = await _is_checkpoint_expired(
             workflow_id,
             thread_id,
@@ -604,7 +609,7 @@ async def _run_workflow_request(
     logger.info(f"API request: workflow={workflow_id}, mode={response_mode}, conversation_id={thread_id}, is_stream={is_stream}")
 
     context = WorkflowContext(
-        thread_id=thread_id,
+        thread_id=runtime_thread_id,
         user_id=user_id,
         request_stream=is_stream,
         from_channel=False if public_mode else bool(body.get("from_channel")),
@@ -639,7 +644,13 @@ async def _run_workflow_request(
 
     if is_stream:
         return StreamingResponse(
-            _stream_workflow(workflow, input_data, context, thread_id),
+            _stream_workflow(
+                workflow,
+                input_data,
+                context,
+                runtime_thread_id,
+                response_conversation_id=response_conversation_id,
+            ),
             media_type="text/event-stream",
         )
 
@@ -650,7 +661,7 @@ async def _run_workflow_request(
 
     channel = OutputChannel(
         workflow_id=workflow_id,
-        thread_id=thread_id,
+        thread_id=runtime_thread_id,
         stream_mode=False,
     )
     channel.task_id = task_id
@@ -662,7 +673,7 @@ async def _run_workflow_request(
         result = await workflow.run(
             inputs=input_data,
             context=context,
-            thread_id=thread_id if thread_id else None,
+            thread_id=runtime_thread_id if runtime_thread_id else None,
         )
 
         state = result.get("state", {})
@@ -701,7 +712,7 @@ async def _run_workflow_request(
                 task_id=task_id,
                 id=message_id,
                 message_id=message_id,
-                conversation_id=thread_id or metadata.get("thread_id"),
+                conversation_id=response_conversation_id or metadata.get("thread_id"),
                 mode="workflow",
                 answer=answer or "",
                 metadata=WorkflowRunMetadata(
@@ -1068,7 +1079,14 @@ async def compress_context(request: Request):
         )
 
 
-async def _stream_workflow(workflow, data: dict, context, thread_id: Optional[str] = None):
+async def _stream_workflow(
+    workflow,
+    data: dict,
+    context,
+    thread_id: Optional[str] = None,
+    *,
+    response_conversation_id: Optional[str] = None,
+):
     """
     Stream workflow execution (Dify-format SSE).
 
@@ -1135,7 +1153,7 @@ async def _stream_workflow(workflow, data: dict, context, thread_id: Optional[st
                 is_interrupted = state.get("__interrupted__", False)
                 outputs = {
                     "answer": answer,
-                    "conversation_id": thread_id,
+                    "conversation_id": response_conversation_id or thread_id,
                     "trace_id": metadata.get("trace_id"),
                     "interrupted": is_interrupted,
                 }

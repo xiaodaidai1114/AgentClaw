@@ -359,8 +359,8 @@ def test_anonymous_public_workflow_run_uses_path_workflow_without_auth(
     assert session.status_code == 200
 
     response = public_api_client.post(
-        "/api/public/workflows/wf-public/run?share_token=share-test",
-        headers=_public_page_headers(),
+        "/api/public/workflows/wf-public/run",
+        headers={**_public_page_headers(), "x-agentclaw-share-token": "share-test"},
         json={
             "workflow_id": "attempted-override",
             "response_mode": "blocking",
@@ -378,7 +378,8 @@ def test_anonymous_public_workflow_run_uses_path_workflow_without_auth(
     assert payload["conversation_id"] == "conv-public"
     assert payload["metadata"]["trace_id"] == "trace-public"
     assert captured["inputs"] == {"__user__": "hello public", "question": "hello public"}
-    assert captured["thread_id"] == "conv-public"
+    assert captured["thread_id"] != "conv-public"
+    assert str(captured["thread_id"]).startswith("public:v1:")
     assert captured["context_user_id"] is None
     assert captured["context_workflow_id"] == "wf-public"
     assert captured["public_mode"] is True
@@ -502,7 +503,9 @@ def test_anonymous_public_workflow_run_rejects_other_users_conversation_id(
     assert first.status_code == 200
     assert second.status_code == 404
     assert second.json()["code"] == "NOT_FOUND"
-    assert captured_threads == ["conv-shared"]
+    assert len(captured_threads) == 1
+    assert captured_threads[0] != "conv-shared"
+    assert captured_threads[0].startswith("public:v1:")
 
 
 def test_anonymous_public_workflow_metadata_requires_share_token_even_with_same_origin_session(
@@ -973,6 +976,70 @@ def test_anonymous_public_workflow_uses_default_rate_limit_when_workflow_has_non
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["code"] == "RATE_LIMITED"
+
+
+def test_anonymous_public_workflow_uses_builtin_default_rate_limit_when_env_unset(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.routers.public import access as public_access
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        rate_limit = None
+        _input_schema = None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.delenv("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", raising=False)
+    monkeypatch.setattr(public_access, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1000.0))
+    public_access.reset_public_rate_limiter()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    body = {
+        "response_mode": "blocking",
+        "conversation_id": "conv-public",
+        "user": "hello public",
+        "inputs": {"question": "hello public"},
+    }
+
+    responses = [
+        public_api_client.post(
+            "/api/public/workflows/wf-public/run?share_token=share-test",
+            headers=_public_page_headers(),
+            json=body,
+        )
+        for _ in range(31)
+    ]
+
+    assert [response.status_code for response in responses[:30]] == [200] * 30
+    assert responses[30].status_code == 429
+    assert responses[30].json()["code"] == "RATE_LIMITED"
 
 
 def test_public_rate_limit_can_use_redis_backend(

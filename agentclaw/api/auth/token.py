@@ -12,6 +12,7 @@ import secrets
 from typing import Optional
 
 from agentclaw.logger.config import get_logger
+from agentclaw.utils.security import safe_compare_digest
 
 logger = get_logger(__name__)
 
@@ -87,7 +88,7 @@ class AdminTokenManager:
         """验证 Token"""
         if not token or not AdminTokenManager._token:
             return False
-        return secrets.compare_digest(token, AdminTokenManager._token)
+        return safe_compare_digest(token, AdminTokenManager._token)
 
 
 class WorkflowAPIKeyManager:
@@ -165,4 +166,4 @@ class WorkflowAPIKeyManager:
         """验证 API Key"""
         if not api_key or not WorkflowAPIKeyManager._api_key:
             return False
-        return secrets.compare_digest(api_key, WorkflowAPIKeyManager._api_key)
+        return safe_compare_digest(api_key, WorkflowAPIKeyManager._api_key)

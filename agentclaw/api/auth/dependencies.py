@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hmac
 from typing import Optional
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from agentclaw.api.auth.token import AdminTokenManager, WorkflowAPIKeyManager
+from agentclaw.utils.security import safe_compare_digest
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ async def authenticate_workflow_or_admin_bearer(
     except HTTPException:
         token = extract_bearer_token(request)
         workflow_key = str(getattr(workflow, "workflow_api_key", "") or "").strip()
-        if token and workflow_key and hmac.compare_digest(token, workflow_key):
+        if token and workflow_key and safe_compare_digest(token, workflow_key):
             return AuthPrincipal(
                 subject=f"workflow:{workflow_id or getattr(workflow, 'id', '')}",
                 auth_type="workflow",

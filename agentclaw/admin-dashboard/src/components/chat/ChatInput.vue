@@ -204,6 +204,7 @@ export default {
   position: absolute; bottom: 0; width: 100%; z-index: 20;
   padding: 0 24px 12px; display: flex; justify-content: center;
   background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.9) 20%, rgba(255,255,255,1) 100%);
+  min-width: 0;
 }
 .drop-overlay {
   position: absolute; inset: 0; z-index: 30;
@@ -221,6 +222,7 @@ export default {
 }
 .input-wrapper {
   width: 100%;
+  min-width: 0;
   max-width: 880px;
   display: flex;
   flex-direction: column;
@@ -231,16 +233,25 @@ export default {
   border-radius: var(--radius-lg, 18px); box-shadow: var(--shadow-float);
   display: flex; flex-direction: column; transition: all 0.2s ease;
   padding: 12px 14px 10px;
+  min-width: 0;
 }
 .input-container.focused { border-color: var(--border-dark, #d4d4d8); box-shadow: var(--shadow-md); }
 
 .input-error { padding: 6px 4px; font-size: 12px; color: #ef4444; }
 
-.attached-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
+.attached-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; min-width: 0; }
 .file-chip {
+  max-width: 100%;
+  min-width: 0;
   display: flex; align-items: center; gap: 4px; padding: 4px 8px;
   background: var(--bg-hover, #f1f1f1); border: 1px solid var(--border-base, #e4e4e7);
   border-radius: 6px; font-size: 12px; color: var(--text-sec, #52525b);
+}
+.file-chip .file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .file-remove { background: none; border: none; cursor: pointer; color: var(--text-muted, #a1a1aa); font-size: 12px; padding: 0 2px; }
 .file-remove:hover { color: #ef4444; }
@@ -260,9 +271,11 @@ export default {
   gap: 8px;
   padding: 0 4px;
   justify-content: flex-start;
+  min-width: 0;
 }
 
 .input-action-btn {
+  max-width: 100%;
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--border-base, #e4e4e7);
@@ -272,6 +285,8 @@ export default {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .input-action-btn:hover:not(:disabled) {
@@ -288,10 +303,14 @@ export default {
 .input-toolbar {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-top: 8px; padding: 0 4px;
+  gap: 12px;
+  min-width: 0;
 }
 
-.toolbar-left { display: flex; align-items: center; gap: 8px; }
-.toolbar-right { display: flex; align-items: flex-end; gap: 14px; }
+.toolbar-left,
+.toolbar-right { min-width: 0; }
+.toolbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.toolbar-right { display: flex; align-items: flex-end; gap: 14px; flex: 1; justify-content: flex-end; }
 
 .toolbar-icon-btn {
   width: 32px; height: 32px; border: none; background: transparent; border-radius: var(--radius-sm, 8px);
@@ -304,6 +323,7 @@ export default {
 
 .context-meter {
   min-width: 168px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -328,6 +348,7 @@ export default {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .context-label {
@@ -340,6 +361,10 @@ export default {
   font-size: 11px;
   color: var(--text-sec, #52525b);
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-bar {
@@ -381,13 +406,20 @@ export default {
 .btn-send.streaming { background: #ef4444; }
 .btn-send.streaming:hover { background: #dc2626; }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .input-area {
-    padding: 0 14px 8px;
+    padding: 0 12px calc(8px + env(safe-area-inset-bottom));
   }
 
   .input-container {
     padding: 12px 12px 10px;
+    border-radius: 12px;
+  }
+
+  .input-textarea {
+    min-height: 40px;
+    max-height: 132px;
+    font-size: 14px;
   }
 
   .input-toolbar {
@@ -396,14 +428,38 @@ export default {
     flex-direction: column;
   }
 
+  .toolbar-left {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+  }
+
   .toolbar-right {
     justify-content: space-between;
     width: 100%;
+    flex: none;
+    gap: 10px;
   }
 
   .context-meter {
     flex: 1;
     min-width: 0;
+  }
+
+  .context-label {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .toolbar-icon-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .btn-send {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
   }
 }
 </style>

@@ -15,7 +15,6 @@ Channel webhook 路由
 """
 
 import asyncio
-import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -23,6 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from agentclaw.api.auth.dependencies import require_admin_auth
 from agentclaw.logger.config import get_logger
+from agentclaw.utils.security import safe_compare_digest
 
 logger = get_logger(__name__)
 
@@ -60,7 +60,7 @@ def _verify_local_webhook_secret(channel, request: Request) -> bool:
     if not secret:
         return False
     supplied = request.headers.get("X-Webhook-Secret", "")
-    return bool(supplied) and secrets.compare_digest(supplied, secret)
+    return bool(supplied) and safe_compare_digest(supplied, secret)
 
 
 def _webhook_forbidden(message: str = "webhook authentication required") -> JSONResponse:

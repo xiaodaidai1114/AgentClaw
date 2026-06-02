@@ -28,6 +28,7 @@ import aiohttp
 
 from agentclaw.channels import ChannelBase, ChannelMessage
 from agentclaw.logger.config import get_logger
+from agentclaw.utils.security import safe_compare_digest
 
 logger = get_logger(__name__)
 
@@ -756,4 +757,4 @@ class DingTalkChannel(ChannelBase):
             digestmod=hashlib.sha256,
         ).digest()
         computed_sign = base64.b64encode(hmac_code).decode("utf-8")
-        return hmac.compare_digest(computed_sign, unquote(sign))
+        return safe_compare_digest(computed_sign, unquote(sign))

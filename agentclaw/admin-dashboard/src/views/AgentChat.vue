@@ -1,7 +1,60 @@
 <template>
-  <div class="agent-chat" :class="{ 'public-chat': isPublicMode }">
-    <ChatSidebar :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
+  <div class="agent-chat" :class="{ 'public-chat': isPublicMode, 'mobile-config-open': mobileConfigOpen }">
+    <ChatSidebar class="desktop-chat-sidebar" :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
     <div class="chat-main">
+      <div class="mobile-chat-header">
+        <button class="mobile-header-btn mobile-conversation-toggle" type="button" :title="$t('chatSidebar.recentConversations')" @click="mobileSidebarOpen = true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <div class="mobile-chat-title">
+          <span>{{ workflowName || 'AgentClaw' }}</span>
+        </div>
+        <div class="mobile-header-actions">
+          <button
+            v-if="!isPublicMode && conversationModels.length"
+            class="mobile-header-btn mobile-model-toggle"
+            type="button"
+            :class="{ active: showModelSelector }"
+            :title="selectedModelName"
+            :aria-expanded="showModelSelector ? 'true' : 'false'"
+            @click="showModelSelector = !showModelSelector"
+          >
+            <span class="mobile-model-label">M</span>
+          </button>
+          <button v-if="hasFormFields" class="mobile-header-btn mobile-config-toggle" type="button" :class="{ active: mobileConfigOpen }" :title="$t('agentChat.configTitle')" @click="mobileConfigOpen = !mobileConfigOpen">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20h9" />
+              <path d="M12 4h9" />
+              <path d="M4 12h16" />
+              <path d="M4 20h4" />
+              <path d="M4 4h4" />
+              <circle cx="10" cy="4" r="2" />
+              <circle cx="10" cy="20" r="2" />
+              <circle cx="6" cy="12" r="2" />
+            </svg>
+          </button>
+          <button v-if="!hasFormFields && (!conversationModels.length || isPublicMode)" class="mobile-header-btn mobile-new-chat" type="button" :title="$t('chatSidebar.createConversation')" @click="newConversation">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+        <div v-if="!isPublicMode && showModelSelector" class="mobile-model-dropdown" @click.stop>
+          <div
+            v-for="m in conversationModels"
+            :key="m.id"
+            class="model-option"
+            :class="{ active: m.id === selectedModel }"
+            role="button"
+            tabindex="0"
+            @click="selectedModel = m.id; showModelSelector = false"
+            @keydown.enter.prevent="selectedModel = m.id; showModelSelector = false"
+            @keydown.space.prevent="selectedModel = m.id; showModelSelector = false"
+          >{{ m.name || m.id }}</div>
+        </div>
+      </div>
       <div v-if="!isPublicMode" class="top-bar">
         <div class="top-bar-title">{{ workflowName || 'AgentClaw' }}</div>
         <div
@@ -32,7 +85,7 @@
           >{{ m.name || m.id }}</div>
         </div>
       </div>
-      <div v-else class="public-header"><h2>{{ workflowName }}</h2><p v-if="workflowDesc">{{ workflowDesc }}</p></div>
+      <div v-else class="public-header desktop-public-header"><h2>{{ workflowName }}</h2><p v-if="workflowDesc">{{ workflowDesc }}</p></div>
       <div class="messages-container" ref="messagesContainer">
         <div v-if="hasFormFields" class="config-panel-wrapper">
           <div class="config-panel">
@@ -126,6 +179,11 @@
       </div>
       <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :speechInputAvailable="speechInputAvailable" :recording="speechRecording" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @speech-input="toggleSpeechInput" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
       <input ref="fileInput" type="file" multiple style="display:none" @change="handleFileSelect" />
+    </div>
+    <div v-if="mobileSidebarOpen" class="mobile-sidebar-overlay" @click.self="mobileSidebarOpen = false">
+      <div class="mobile-sidebar-sheet">
+        <ChatSidebar class="mobile-chat-sidebar" :conversations="conversations" :activeId="conversationId" :collapsed="false" @new-conversation="handleMobileNewConversation" @select="handleMobileSelectConversation" @delete="handleMobileDeleteConversation" />
+      </div>
     </div>
     <div v-if="!isPublicMode" class="info-panel" :class="{ collapsed: infoPanelCollapsed }" :style="infoPanelCollapsed ? {} : { width: infoPanelWidth + 'px' }">
       <button class="info-panel-toggle" @click="infoPanelCollapsed = !infoPanelCollapsed" :title="infoPanelCollapsed ? $t('agentChat.expandPanel') : $t('agentChat.collapsePanel')">
@@ -421,6 +479,8 @@ export default {
       inputText: '',
       inputError: '',
       inputErrorTimer: null,
+      mobileSidebarOpen: false,
+      mobileConfigOpen: false,
       workflowLoadError: '',
       publicSessionReady: false,
       isStreaming: false,
@@ -1346,6 +1406,18 @@ export default {
       return true
     },
     generateId() { return generateLocalConversationId() },
+    async handleMobileNewConversation() {
+      this.mobileSidebarOpen = false
+      await this.newConversation()
+    },
+    async handleMobileSelectConversation(convId) {
+      this.mobileSidebarOpen = false
+      await this.loadConversation(convId)
+    },
+    async handleMobileDeleteConversation(convId) {
+      this.mobileSidebarOpen = false
+      await this.deleteConversation(convId)
+    },
     navigateToConversation(convId) {
       if (!convId) return
       this.$router.replace({ query: { ...withoutSeedInput(this.$route.query), conversation_id: convId } })
@@ -1767,13 +1839,11 @@ export default {
       let endpoint = this.isPublicMode
         ? `${baseUrl}/api/public/workflows/${encodeURIComponent(this.currentWorkflowId)}/run`
         : `${baseUrl}/api/workflow/run`
-      if (this.isPublicMode && this.shareToken) {
-        endpoint += `?share_token=${encodeURIComponent(this.shareToken)}`
-      }
       const headers = { 'Content-Type': 'application/json' }
       if (this.isPublicMode) {
         await this.ensurePublicSession()
         headers['X-AgentClaw-Public-Session'] = '1'
+        if (this.shareToken) headers['X-AgentClaw-Share-Token'] = this.shareToken
       }
       if (!this.isPublicMode) {
         const authHeaders = getAdminAuthHeaders(headers)
@@ -2380,7 +2450,7 @@ export default {
 * { box-sizing: border-box; }
 .mono-font { font-family: var(--font-mono); }
 .agent-chat { display: flex; height: 100vh; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; -webkit-font-smoothing: antialiased; background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%); margin: -24px; width: calc(100% + 48px); }
-.agent-chat.public-chat { margin: 0; width: 100%; height: 100vh; overflow: hidden; }
+.agent-chat.public-chat { margin: 0; width: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
 
 .chevron-icon {
   flex-shrink: 0;
@@ -2394,8 +2464,10 @@ export default {
 }
 
 /* Chat Main */
-.chat-main { flex: 1; display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(248,250,252,0.94)); position: relative; min-width: 400px; }
+.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(248,250,252,0.94)); position: relative; overflow-x: hidden; }
 .public-chat .chat-main { min-width: 0; }
+.mobile-chat-header { display: none; }
+.mobile-sidebar-overlay { display: none; }
 .top-bar { padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-light); z-index: 10; background: rgba(255,255,255,0.85); backdrop-filter: blur(12px); position: relative; }
 .top-bar-title { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; }
 .model-selector { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-app); border: 1px solid var(--border-base); border-radius: var(--radius-full); cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-sec); transition: all 0.2s; }
@@ -2411,50 +2483,51 @@ export default {
 .public-header p { font-size: 13px; color: var(--text-muted); margin: 0; }
 
 /* Messages */
-.messages-container { flex: 1; overflow-y: auto; padding: 24px 0 160px; display: flex; flex-direction: column; scroll-behavior: smooth; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.72) rgba(226, 232, 240, 0.55); }
+.messages-container { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 24px 0 160px; display: flex; flex-direction: column; scroll-behavior: smooth; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.72) rgba(226, 232, 240, 0.55); }
 .messages-container::-webkit-scrollbar { width: 10px; }
 .messages-container::-webkit-scrollbar-track { background: rgba(226, 232, 240, 0.55); border-radius: var(--radius-full); margin: 12px 0 152px; }
 .messages-container::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(100, 116, 139, 0.78), rgba(71, 85, 105, 0.88)); border: 2px solid rgba(248, 250, 252, 0.9); border-radius: var(--radius-full); }
 .messages-container::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(71, 85, 105, 0.92), rgba(51, 65, 85, 0.98)); }
 
 /* Config Panel */
-.config-panel-wrapper { width: 100%; display: flex; justify-content: center; padding: 0 24px; margin-bottom: 16px; }
-.config-panel { width: 100%; max-width: 880px; border: 1px solid rgba(226, 232, 240, 0.95); border-radius: 18px; overflow: hidden; background: rgba(255,255,255,0.88); box-shadow: 0 20px 42px -36px rgba(15, 23, 42, 0.35); backdrop-filter: blur(12px); }
+.config-panel-wrapper { width: 100%; min-width: 0; display: flex; justify-content: center; padding: 0 24px; margin-bottom: 16px; }
+.config-panel { width: 100%; min-width: 0; max-width: 880px; border: 1px solid rgba(226, 232, 240, 0.95); border-radius: 18px; overflow: hidden; background: rgba(255,255,255,0.88); box-shadow: 0 20px 42px -36px rgba(15, 23, 42, 0.35); backdrop-filter: blur(12px); }
 .config-header { padding: 13px 16px; background: linear-gradient(180deg, rgba(248,250,252,0.98), rgba(241,245,249,0.92)); cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 600; color: var(--text-main); }
 .config-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-.form-field { display: flex; flex-direction: column; gap: 6px; }
+.form-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .form-field label { font-size: 13px; font-weight: 500; color: var(--text-secondary); line-height: 1.5; }
-.form-field input, .form-field select, .form-field textarea { padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; outline: none; font-family: inherit; line-height: 1.5; }
+.form-field input, .form-field select, .form-field textarea { width: 100%; min-width: 0; padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; outline: none; font-family: inherit; line-height: 1.5; }
 .form-field input:focus, .form-field select:focus, .form-field textarea:focus { border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
 .form-field.invalid input, .form-field.invalid select, .form-field.invalid textarea { border-color: var(--danger-main); }
 .required-mark { color: var(--danger-main); margin-left: 3px; }
 .field-error { color: var(--danger-main); font-size: 12px; line-height: 1.4; }
 .form-field textarea { resize: vertical; min-height: 60px; }
-.file-upload-field { display: flex; align-items: center; gap: 8px; }
-.file-upload-btn { display: inline-flex; align-items: center; justify-content: center; padding: 8px 16px; border: 1px dashed var(--border-color); border-radius: 6px; font-size: 13px; color: var(--accent-color); cursor: pointer; transition: all 0.2s; }
+.file-upload-field { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.file-upload-btn { max-width: 100%; display: inline-flex; align-items: center; justify-content: center; padding: 8px 16px; border: 1px dashed var(--border-color); border-radius: 6px; font-size: 13px; color: var(--accent-color); cursor: pointer; transition: all 0.2s; }
 .file-upload-btn:hover:not(.disabled) { border-color: var(--accent-color); background: rgba(59,130,246,0.05); }
 .file-upload-btn.disabled { opacity: 0.5; cursor: not-allowed; }
-.file-uploaded { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-light); border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; }
-.file-uploaded .file-name { color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-uploaded { max-width: 100%; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-light); border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; }
+.file-uploaded .file-name { color: var(--text-primary); min-width: 0; max-width: min(200px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-uploaded .file-remove { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
 .file-uploaded .file-remove:hover { color: var(--error); }
 .files-upload-field { display: flex; flex-direction: column; gap: 6px; }
 .files-list { display: flex; flex-direction: column; gap: 4px; }
 .btn-start { padding: 10px 20px; background: var(--primary-color, #18181b); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
 .btn-start:hover { background: var(--primary-hover, #000000); }
-.form-start-bar { width: 100%; max-width: 880px; margin: -8px auto 16px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-sec); font-size: 13px; line-height: 1.6; }
+.form-start-bar { width: 100%; max-width: 880px; min-width: 0; margin: -8px auto 16px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-sec); font-size: 13px; line-height: 1.6; }
+.form-start-bar span { min-width: 0; overflow-wrap: anywhere; }
 .form-start-bar .btn-start { flex-shrink: 0; }
 
 .type-warning { text-align: center; padding: 8px; font-size: 12px; color: #f59e0b; background: #fffbeb; border-radius: 6px; margin: 0 24px 8px; }
 
 /* Welcome */
-.welcome-area { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-muted); }
+.welcome-area { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-muted); }
 .workflow-error-panel { width: min(560px, calc(100% - 32px)); margin: 72px auto 0; padding: 20px 22px; border: 1px solid rgba(239,68,68,0.28); border-radius: 8px; background: #fff5f5; color: var(--danger-main); }
 .workflow-error-panel h3 { margin: 0 0 8px; font-size: 16px; line-height: 1.4; color: #991b1b; }
 .workflow-error-panel p { margin: 0; font-size: 14px; line-height: 1.6; color: #7f1d1d; word-break: break-word; }
 .welcome-icon-large { font-size: 48px; font-weight: 600; color: var(--text-secondary); }
-.welcome-area h3 { font-size: 20px; font-weight: 600; color: var(--text-main); margin: 0; line-height: 1.4; }
-.welcome-area p { font-size: 15px; margin: 0; line-height: 1.6; }
+.welcome-area h3 { max-width: min(880px, calc(100% - 32px)); font-size: 20px; font-weight: 600; color: var(--text-main); margin: 0; line-height: 1.4; overflow-wrap: anywhere; }
+.welcome-area p { max-width: min(880px, calc(100% - 32px)); font-size: 15px; margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .standalone-start-wrapper { margin-top: 4px; }
 .btn-start.standalone { min-width: 160px; }
 /* Show All Messages */
@@ -2478,7 +2551,9 @@ export default {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.18s ease;
+  min-width: 0;
 }
+.process-toggle-pill span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .process-toggle-pill:hover {
   transform: translateY(-1px);
   color: var(--text-main, #18181b);
@@ -2642,12 +2717,197 @@ export default {
 /* Approval bar */
 /* Responsive */
 @media (max-width: 1024px) { .info-panel { display: none; } }
-@media (max-width: 768px) {
-  .agent-chat { margin: -24px 0; width: 100%; }
-  .agent-chat { height: calc(100vh + 48px); }
-  .chat-main { min-width: 0; }
-  .chat-sidebar { display: none; }
-  .messages-container { padding: 18px 0 150px; }
-  .config-panel-wrapper { padding: 0 12px; }
+@media (max-width: 1024px) {
+  .agent-chat {
+    margin: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .desktop-chat-sidebar,
+  .top-bar,
+  .desktop-public-header {
+    display: none;
+  }
+
+  .chat-main {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .mobile-chat-header {
+    min-height: 52px;
+    padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+    border-bottom: 1px solid var(--border-light);
+    background: rgba(255,255,255,0.94);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 30;
+    position: relative;
+  }
+
+  .agent-chat:not(.public-chat) .mobile-chat-header {
+    padding-left: 56px;
+  }
+
+  .mobile-header-btn {
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--border-base);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.96);
+    color: var(--text-sec);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .mobile-header-btn.active {
+    border-color: rgba(59,130,246,0.45);
+    color: var(--accent-main);
+    background: rgba(219,234,254,0.7);
+  }
+
+  .mobile-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .mobile-model-label {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .mobile-model-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 12px;
+    width: min(260px, calc(100vw - 24px));
+    padding: 4px;
+    border: 1px solid var(--border-base);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: var(--shadow-float);
+    z-index: 90;
+  }
+
+  .mobile-chat-title {
+    min-width: 0;
+    flex: 1;
+    text-align: center;
+    color: var(--text-main);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .mobile-chat-title span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .messages-container {
+    padding: 12px 0 138px;
+    scrollbar-gutter: auto;
+  }
+
+  .messages-container::-webkit-scrollbar {
+    width: 0;
+  }
+
+  .config-panel-wrapper {
+    display: none;
+    padding: 0 10px;
+    margin-bottom: 10px;
+  }
+
+  .mobile-config-open .config-panel-wrapper {
+    display: flex;
+  }
+
+  .config-panel {
+    border-radius: 8px;
+  }
+
+  .config-header {
+    padding: 11px 12px;
+  }
+
+  .config-body {
+    padding: 14px 12px;
+    gap: 12px;
+  }
+
+  .form-start-bar {
+    margin: 0 0 10px;
+    padding: 0 12px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-start-bar .btn-start {
+    width: 100%;
+  }
+
+  .type-warning {
+    margin: 0 12px 8px;
+  }
+
+  .welcome-area {
+    padding: 0 18px 24px;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .welcome-icon-large {
+    font-size: 36px;
+  }
+
+  .welcome-area h3 {
+    font-size: 18px;
+  }
+
+  .welcome-area p {
+    font-size: 14px;
+  }
+
+  .workflow-error-panel {
+    margin-top: 24px;
+  }
+
+  .chat-display-toolbar {
+    top: 8px;
+    padding: 2px 12px 8px;
+  }
+
+  .process-toggle-pill {
+    max-width: calc(100vw - 24px);
+  }
+
+  .mobile-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgba(15,23,42,0.36);
+    display: flex;
+  }
+
+  .mobile-sidebar-sheet {
+    width: min(88vw, 360px);
+    height: 100%;
+    background: var(--bg-sidebar);
+    box-shadow: 24px 0 52px -34px rgba(15,23,42,0.65);
+  }
 }
 </style>

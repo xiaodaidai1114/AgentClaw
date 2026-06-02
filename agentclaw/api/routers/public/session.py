@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import os
 import secrets
@@ -16,6 +15,7 @@ from fastapi import Request
 
 from agentclaw.database import get_database
 from agentclaw.api.routers.public.access import trust_proxy_headers
+from agentclaw.utils.security import safe_compare_digest
 
 
 PUBLIC_SESSION_COOKIE = "agentclaw_public_session"
@@ -119,6 +119,8 @@ def base64url_decode(value: str) -> bytes:
 
 
 def sign_public_session_payload(encoded_payload: str) -> str:
+    import hmac
+
     digest = hmac.new(
         public_session_signing_secret(),
         encoded_payload.encode("ascii"),
@@ -128,6 +130,8 @@ def sign_public_session_payload(encoded_payload: str) -> str:
 
 
 def sign_public_user_id(user_id: str) -> str:
+    import hmac
+
     digest = hmac.new(
         public_session_signing_secret(),
         f"agentclaw-public-user-v1:{user_id}".encode("utf-8"),
@@ -146,13 +150,18 @@ def public_user_id_from_cookie(value: str | None) -> str:
     user_id, signature = value.rsplit(".", 1)
     if not user_id or not signature:
         return ""
-    if not hmac.compare_digest(signature, sign_public_user_id(user_id)):
+    if not safe_compare_digest(signature, sign_public_user_id(user_id)):
         return ""
     return user_id
 
 
 def public_owner_id_from_user_id(user_id: str) -> str:
     return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:32] if user_id else ""
+
+
+def public_runtime_thread_id(workflow_id: str, owner_id: str, conversation_id: str) -> str:
+    payload = "\0".join((workflow_id, owner_id, conversation_id)).encode("utf-8")
+    return f"public:v1:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _redis_client() -> Any | None:
@@ -226,6 +235,16 @@ def public_owner_id_from_request(request: Request) -> str:
     return public_owner_id_from_user_id(user_id)
 
 
+def public_cookie_secure(request: Request) -> bool:
+    raw = os.getenv("AGENTCLAW_PUBLIC_COOKIE_SECURE", "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    forwarded_proto = request.headers.get("x-forwarded-proto", "") if trust_proxy_headers() else ""
+    return forwarded_proto.split(",", 1)[0].strip().lower() == "https" or request.url.scheme == "https"
+
+
 def set_public_user_cookie(response, request: Request, user_id: str) -> None:
     response.set_cookie(
         PUBLIC_USER_COOKIE,
@@ -233,7 +252,7 @@ def set_public_user_cookie(response, request: Request, user_id: str) -> None:
         max_age=public_user_ttl_seconds(),
         httponly=True,
         samesite="strict",
-        secure=request.url.scheme == "https",
+        secure=public_cookie_secure(request),
         path="/api",
     )
 
@@ -331,7 +350,7 @@ def verify_public_session(request: Request, workflow_id: str) -> bool:
         return False
 
     expected_signature = sign_public_session_payload(encoded_payload)
-    if not hmac.compare_digest(signature, expected_signature):
+    if not safe_compare_digest(signature, expected_signature):
         return False
 
     try:

@@ -12,10 +12,56 @@ describe('public agent and dashboard UX safeguards', () => {
 
   it('keeps the chat layout usable on narrow mobile screens', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+    const inputSource = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatInput.vue'), 'utf8')
+    const sidebarSource = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatSidebar.vue'), 'utf8')
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const globalSource = readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8')
 
-    expect(source).toContain('@media (max-width: 768px)')
+    expect(source).toContain('@media (max-width: 1024px)')
     expect(source).toContain('.chat-main { min-width: 0; }')
-    expect(source).toContain('.agent-chat { margin: -24px 0; width: 100%; }')
+    expect(source).toContain('.chat-main { flex: 1; min-width: 0;')
+    expect(source).toContain('overflow-x: hidden;')
+    expect(source).toContain('mobile-chat-header')
+    expect(source).toContain('mobile-conversation-toggle')
+    expect(source).toContain('mobile-config-toggle')
+    expect(source).toContain('mobile-sidebar-overlay')
+    expect(source).toContain('mobile-config-open')
+    expect(source).toContain('height: 100dvh;')
+    expect(source).not.toContain('.chat-sidebar { display: none; }')
+    expect(appSource).toContain('mobile-main-nav-toggle')
+    expect(appSource).toContain('mobile-main-sidebar-overlay')
+    expect(globalSource).toContain('@media (max-width: 1024px)')
+    expect(globalSource).toContain('margin-left: 0;')
+    expect(inputSource).toContain('env(safe-area-inset-bottom)')
+    expect(inputSource).toContain('@media (max-width: 1024px)')
+    expect(sidebarSource).toContain('@media (hover: none)')
+  })
+
+  it('prevents chat content from overflowing narrow screens', () => {
+    const messageSource = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatMessage.vue'), 'utf8')
+    const streamingSource = readFileSync(resolve(process.cwd(), 'src/components/chat/StreamingMessage.vue'), 'utf8')
+    const inputSource = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatInput.vue'), 'utf8')
+
+    expect(messageSource).toContain('.message-wrapper { width: 100%; min-width: 0;')
+    expect(messageSource).toContain('.message { width: 100%; min-width: 0;')
+    expect(messageSource).toContain('.message-content { min-width: 0;')
+    expect(messageSource).toContain('@media (max-width: 1024px)')
+    expect(messageSource).toContain('.message-wrapper { padding: 0 12px; }')
+    expect(messageSource).toContain('.tool-args-summary')
+    expect(messageSource).toContain('max-width: min(180px, 44vw);')
+
+    expect(streamingSource).toContain('.message-wrapper { width: 100%; min-width: 0;')
+    expect(streamingSource).toContain('.message { width: 100%; min-width: 0;')
+    expect(streamingSource).toContain('.message-content { min-width: 0;')
+    expect(streamingSource).toContain('@media (max-width: 1024px)')
+    expect(streamingSource).toContain('.message-wrapper { padding: 0 12px; }')
+    expect(streamingSource).toContain('.tool-args-summary')
+    expect(streamingSource).toContain('max-width: min(180px, 44vw);')
+
+    expect(inputSource).toContain('.input-wrapper {')
+    expect(inputSource).toContain('min-width: 0;')
+    expect(inputSource).toContain('.toolbar-left,')
+    expect(inputSource).toContain('.toolbar-right { min-width: 0;')
   })
 
   it('does not advance the scheduler wizard when the selected trigger is incomplete', () => {
@@ -34,6 +80,9 @@ describe('public agent and dashboard UX safeguards', () => {
 
     expect(chatSource).toContain('aria-expanded')
     expect(chatSource).toContain('@keydown.enter.prevent')
+    expect(chatSource).toContain('mobile-header-actions')
+    expect(chatSource).toContain('mobile-model-toggle')
+    expect(chatSource).toContain('mobile-model-dropdown')
     expect(sidebarSource).toContain('role="button"')
     expect(sidebarSource).toContain('@keydown.enter.prevent')
     expect(toolPanelSource).toContain('details-close')
@@ -51,10 +100,11 @@ describe('public agent and dashboard UX safeguards', () => {
   it('keeps public shared agent chat within the viewport', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
 
-    expect(source).toContain(":class=\"{ 'public-chat': isPublicMode }\"")
+    expect(source).toContain("'public-chat': isPublicMode")
     expect(source).toContain('.agent-chat.public-chat {')
     expect(source).toContain('margin: 0;')
     expect(source).toContain('width: 100%;')
     expect(source).toContain('height: 100vh;')
+    expect(source).toContain('height: 100dvh;')
   })
 })

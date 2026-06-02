@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from agentclaw.logger.config import get_logger
+from agentclaw.utils.security import safe_compare_digest
 
 if TYPE_CHECKING:
     from agentclaw.graph.workflow import Workflow
@@ -234,7 +235,7 @@ class MCPTokenManager:
         """验证 Token"""
         if not token:
             return False
-        return secrets.compare_digest(token, self.token)
+        return safe_compare_digest(token, self.token)
 
 
 class MCPServerRegistry:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentclaw-ai"
-version = "1.1.1"
+version = "1.1.2"
 description = "AgentClaw turns one-sentence ideas into reusable Claw capabilities with declarative workflows, computer/browser/code/file control, MCP, Skills, memory, knowledge bases, tracing, scheduling, and API/MCP publishing."
 readme = "README.md"
 license = "Apache-2.0"

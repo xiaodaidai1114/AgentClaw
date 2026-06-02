@@ -85,6 +85,13 @@ export default {
   transition: width 0.2s;
 }
 .chat-sidebar.collapsed { width: 48px; }
+.chat-sidebar.mobile-chat-sidebar {
+  width: 100%;
+  height: 100%;
+}
+.chat-sidebar.mobile-chat-sidebar .btn-toggle {
+  display: none;
+}
 
 .sidebar-header {
   padding: 16px;
@@ -135,4 +142,27 @@ export default {
 .btn-toggle:hover { background: var(--bg-hover, #f1f1f1); color: var(--text-main, #18181b); }
 
 .mono-font { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
+
+@media (hover: none) {
+  .history-time { opacity: 0; }
+  .history-delete-btn { opacity: 1; }
+}
+
+@media (max-width: 1024px) {
+  .chat-sidebar.mobile-chat-sidebar {
+    border-right: 1px solid var(--border-base, #e4e4e7);
+  }
+
+  .chat-sidebar.mobile-chat-sidebar .sidebar-header {
+    padding: calc(14px + env(safe-area-inset-top)) 16px 12px;
+  }
+
+  .chat-sidebar.mobile-chat-sidebar .history-section {
+    padding: 8px 10px 16px;
+  }
+
+  .chat-sidebar.mobile-chat-sidebar .history-item {
+    min-height: 44px;
+  }
+}
 </style>

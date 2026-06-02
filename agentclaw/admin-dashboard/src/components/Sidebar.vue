@@ -26,7 +26,7 @@
         v-if="!collapsed"
         class="settings-btn"
         :class="{ active: route.path === '/settings' }"
-        @click="router.push('/settings')"
+        @click="goSettings"
       >
         <span style="margin-right: 6px;">⚙️</span>{{ $t('nav.settings') }}
       </div>
@@ -34,7 +34,7 @@
         v-else
         class="settings-btn"
         :class="{ active: route.path === '/settings' }"
-        @click="router.push('/settings')"
+        @click="goSettings"
         :title="$t('nav.settings')"
       >
         <span>⚙️</span>
@@ -57,7 +57,7 @@ import { useI18n } from 'vue-i18n'
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:collapsed'])
+const emit = defineEmits(['update:collapsed', 'select'])
 
 const route = useRoute()
 const router = useRouter()
@@ -101,6 +101,12 @@ const activeKey = computed(() => {
 
 function handleSelect(key) {
   router.push(key)
+  emit('select', key)
+}
+
+function goSettings() {
+  router.push('/settings')
+  emit('select', '/settings')
 }
 </script>
 
@@ -205,5 +211,24 @@ function handleSelect(key) {
 .btn-collapse:hover {
   background: var(--bg-light);
   color: var(--text-primary);
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    display: none;
+  }
+
+  .sidebar.mobile-main-sidebar {
+    position: static;
+    display: flex;
+    width: min(82vw, 280px);
+    height: 100vh;
+    height: 100dvh;
+    box-shadow: 24px 0 52px -34px rgba(15,23,42,0.65);
+  }
+
+  .sidebar.mobile-main-sidebar .btn-collapse {
+    display: none;
+  }
 }
 </style>

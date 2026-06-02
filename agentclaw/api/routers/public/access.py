@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from agentclaw.api.schemas.common import ErrorCode
 from agentclaw.database import get_database
+from agentclaw.utils.security import safe_compare_digest
 
 
 PUBLIC_SHARE_TOKEN_QUERY_KEYS = ("share_token", "token")
@@ -126,7 +127,7 @@ def public_rate_limit_redis_required() -> bool:
 
 
 def default_public_rate_limit() -> str:
-    return os.getenv("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "").strip()
+    return os.getenv("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "30/min").strip()
 
 
 def forbidden_response(error: str) -> JSONResponse:
@@ -177,6 +178,9 @@ def public_share_token_from_request(
     request: Request,
     body: Optional[Mapping[str, Any]] = None,
 ) -> str:
+    header_value = request.headers.get("x-agentclaw-share-token", "")
+    if header_value:
+        return header_value
     for key in PUBLIC_SHARE_TOKEN_QUERY_KEYS:
         value = request.query_params.get(key)
         if value:
@@ -192,7 +196,7 @@ def public_share_token_from_request(
 def _constant_time_token_match(expected: str, supplied: str) -> bool:
     if not expected or not supplied:
         return False
-    return secrets.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
+    return safe_compare_digest(expected, supplied)
 
 
 def verify_public_share_token(

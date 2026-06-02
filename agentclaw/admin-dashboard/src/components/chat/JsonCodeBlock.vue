@@ -127,6 +127,8 @@ export default {
 
 <style scoped>
 .json-code-block {
+  width: 100%;
+  min-width: 0;
   background: linear-gradient(180deg, rgba(250, 252, 255, 0.98), rgba(244, 247, 251, 0.98));
   border: 1px solid rgba(203, 213, 225, 0.9);
   border-radius: 14px;
@@ -135,6 +137,7 @@ export default {
 }
 
 .json-code-toolbar {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -145,6 +148,7 @@ export default {
 }
 
 .json-code-label {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -211,10 +215,13 @@ export default {
 }
 
 .json-code-body {
+  min-width: 0;
   padding: 0;
+  overflow-x: auto;
 }
 
 .json-code-pre {
+  min-width: 0;
   margin: 0;
   padding: 10px 12px 12px;
   max-height: 300px;
@@ -250,6 +257,7 @@ export default {
 
 .json-code-dialog {
   width: min(1100px, 96vw);
+  min-width: 0;
   max-height: 88vh;
   background: linear-gradient(180deg, rgba(250, 252, 255, 0.99), rgba(244, 247, 251, 1));
   border: 1px solid rgba(203, 213, 225, 0.92);

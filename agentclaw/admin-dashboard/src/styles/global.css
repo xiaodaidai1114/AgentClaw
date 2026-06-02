@@ -71,6 +71,18 @@ a {
   padding: 0;
 }
 
+@media (max-width: 1024px) {
+  .main-content,
+  .sidebar-collapsed .main-content {
+    margin-left: 0;
+    padding: 12px;
+  }
+
+  .public-layout .main-content {
+    padding: 0;
+  }
+}
+
 /* ── Scrollbar ─────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;

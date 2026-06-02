@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="workflow-detail-page">
     <PageHeader :breadcrumbs="[{ text: t('workflows.title'), to: '/workflows' }, { text: workflowId }]" @refresh="fetchData">
       <template #actions>
         <n-button size="small" @click="router.push(`/workflows/${workflowId}/config`)">{{ t('workflowDetail.configure') }}</n-button>
@@ -12,7 +12,7 @@
 
     <!-- 工作流概览 -->
     <n-card size="small" style="margin-bottom: 20px;">
-      <n-space align="center" :size="20">
+      <n-space class="workflow-summary-space" align="center" :size="20">
         <n-text strong style="font-size: 15px;">{{ workflow?.name || workflowId }}</n-text>
         <n-tag size="small" round>v{{ workflow?.version || '-' }}</n-tag>
         <n-text depth="3" style="font-size: 13px;">{{ t('workflowDetail.nodesCount', { count: workflow?.nodes?.length || 0 }) }}</n-text>
@@ -73,18 +73,21 @@
       <template #header-extra>
         <n-button text type="primary" @click="router.push(`/dashboard?tab=traces&workflow_id=${workflowId}`)">{{ t('common.viewAll') }}</n-button>
       </template>
-      <n-data-table
-        :columns="traceColumns"
-        :data="recentTraces"
-        :bordered="false"
-        size="small"
-        :row-key="row => row.id"
-        :row-props="traceRowProps"
-      />
+      <div class="table-scroll">
+        <n-data-table
+          :columns="traceColumns"
+          :data="recentTraces"
+          :bordered="false"
+          size="small"
+          :row-key="row => row.id"
+          :row-props="traceRowProps"
+          scroll-x="max-content"
+        />
+      </div>
     </n-card>
 
     <!-- 节点详情 Drawer -->
-    <n-drawer v-model:show="drawerVisible" :width="drawerWidth" placement="right">
+    <n-drawer v-model:show="drawerVisible" :width="responsiveDrawerWidth" placement="right">
       <div :style="resizeHandleStyle" @mousedown="onResizeMouseDown" />
       <n-drawer-content :title="`${selectedNode?.id || ''} ${t('workflowDetail.node')}`" :native-scrollbar="false">
         <n-card size="small" style="margin-bottom: 16px;">
@@ -166,6 +169,7 @@ const timeOptions = computed(() => [
 // Node detail drawer
 const drawerVisible = ref(false)
 const { drawerWidth, resizeHandleStyle, onResizeMouseDown } = useResizableDrawer({ initial: 420, min: 320, max: 900 })
+const responsiveDrawerWidth = computed(() => `min(${drawerWidth.value}px, 100vw)`)
 const selectedNode = ref(null)
 const selectedNodeStats = ref(null)
 const selectedModelId = ref('')
@@ -387,6 +391,25 @@ onMounted(() => {
   gap: 16px;
 }
 
+.workflow-detail-page {
+  min-width: 0;
+}
+
+.workflow-summary-space {
+  min-width: 0;
+}
+
+.workflow-summary-space :deep(.n-text) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 @media (max-width: 1200px) {
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -396,6 +419,12 @@ onMounted(() => {
 @media (max-width: 640px) {
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .workflow-summary-space {
+    width: 100%;
   }
 }
 </style>

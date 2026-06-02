@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="traces-page">
     <PageHeader v-if="!embedded" :title="t('traces.title')" @refresh="fetchAll" />
 
     <!-- 统计摘要 -->
@@ -38,8 +38,8 @@
     </div>
 
     <!-- 过滤器 -->
-    <n-card size="small" style="margin-bottom: 16px;">
-      <n-space :size="12" align="center" wrap>
+    <n-card class="trace-filter-card" size="small" style="margin-bottom: 16px;">
+      <n-space class="trace-filter-space" :size="12" align="center" wrap>
         <n-select v-model:value="filters.workflow_id" :options="workflowOptions" :placeholder="t('dashboard.allAgents')"
           clearable filterable style="width: 180px;" size="small" @update:value="applyFilters" />
         <n-select v-model:value="filters.status" :options="statusOptions" :placeholder="t('dashboard.status')"
@@ -52,11 +52,14 @@
     </n-card>
 
     <!-- 表格 -->
-    <n-card>
-      <n-data-table :columns="columns" :data="traces" :loading="loading" :bordered="false"
-        :row-key="row => row.id" size="small" :row-props="rowProps" />
+    <n-card class="trace-table-card">
+      <div class="table-scroll">
+        <n-data-table :columns="columns" :data="traces" :loading="loading" :bordered="false"
+          :row-key="row => row.id" size="small" :row-props="rowProps" scroll-x="max-content" />
+      </div>
       <n-pagination
         v-if="total > 0"
+        class="trace-pagination"
         v-model:page="page"
         :page-size="limit"
         :item-count="total"
@@ -65,7 +68,6 @@
         show-size-picker
         @update:page="changePage"
         @update:page-size="changePageSize"
-        style="margin-top: 16px; justify-content: flex-end;"
       />
     </n-card>
   </div>
@@ -317,6 +319,31 @@ onMounted(() => {
   gap: 16px;
 }
 
+.traces-page {
+  min-width: 0;
+}
+
+.trace-filter-card,
+.trace-table-card {
+  min-width: 0;
+}
+
+.trace-filter-space {
+  min-width: 0;
+}
+
+.table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.trace-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .token-stat {
   display: flex;
   flex-direction: column;
@@ -349,7 +376,34 @@ onMounted(() => {
 
 @media (max-width: 640px) {
   .stat-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
+  }
+
+  .trace-pagination {
+    justify-content: flex-start;
+  }
+
+  .trace-pagination :deep(.n-pagination-quick-jumper),
+  .trace-pagination :deep(.n-pagination-size-picker) {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .trace-filter-space {
+    width: 100%;
+    align-items: stretch !important;
+  }
+
+  .trace-filter-space :deep(.n-select),
+  .trace-filter-space :deep(.n-date-picker),
+  .trace-filter-space :deep(.n-button) {
+    width: 100% !important;
+  }
+
+  .trace-filter-space :deep(.n-text) {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }
 </style>

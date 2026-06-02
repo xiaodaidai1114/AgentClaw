@@ -744,6 +744,7 @@ class AgentClawServer:
             redoc_url="/redoc" if self.enable_api_docs else None,
             openapi_url="/openapi.json" if self.enable_api_docs else None,
         )
+        self._register_error_handlers(app)
         from agentclaw.api.upload_limits import (
             DEFAULT_REQUEST_BODY_LIMIT_BYTES,
             MULTIPART_OVERHEAD_ALLOWANCE_BYTES,
@@ -1311,7 +1312,24 @@ class AgentClawServer:
                     "message": f"Method '{method}' not found",
                 },
             }
-    
+
+    def _register_error_handlers(self, app) -> None:
+        from agentclaw.api.schemas.common import ErrorCode
+
+        @app.exception_handler(Exception)
+        async def global_exception_handler(request, exc: Exception):
+            import traceback
+
+            error_detail = traceback.format_exc()
+            logger.error(f"未捕获的异常: {exc}\n{error_detail}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "服务器内部错误",
+                    "code": ErrorCode.UNKNOWN_ERROR,
+                },
+            )
+
     def _register_admin_routes(self, app) -> None:
         """注册 Admin API 路由"""
         try:
@@ -1376,21 +1394,6 @@ class AgentClawServer:
                         "error": "请求参数验证失败",
                         "code": ErrorCode.VALIDATION_ERROR,
                         "detail": error_msg,
-                    }
-                )
-            
-            # 全局未捕获异常处理器
-            @app.exception_handler(Exception)
-            async def global_exception_handler(request, exc: Exception):
-                import traceback
-                error_detail = traceback.format_exc()
-                logger.error(f"未捕获的异常: {exc}\n{error_detail}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "error": "服务器内部错误",
-                        "code": ErrorCode.UNKNOWN_ERROR,
-                        "message": str(exc),
                     }
                 )
             
@@ -1588,10 +1591,7 @@ class AgentClawServer:
             """服务 Admin Dashboard SPA"""
             if self.dashboard_mode == "public-chat":
                 normalized = path.strip("/")
-                public_chat_path = (
-                    normalized.startswith("workflows/")
-                    and normalized.endswith("/chat")
-                )
+                public_chat_path = normalized.startswith("agent/")
                 if normalized and not public_chat_path:
                     return JSONResponse(status_code=404, content={"error": "Not found"})
             index_file = dist_path / "index.html"

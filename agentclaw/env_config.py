@@ -160,7 +160,7 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
     EnvSection(
         title="Public Agent Security",
         description=(
-            "Public Agent 公开访问入口的可选安全限制。默认值保持本地开发和既有项目行为；公网发布时按需收紧。",
+            "Public Agent 公开访问入口的安全限制；公网发布时可按业务压力继续收紧。",
         ),
         variables=(
             EnvVarSpec("AGENTCLAW_PUBLIC_MAX_AUDIO_BYTES", "10485760", "Public 语音输入最大音频字节数。"),
@@ -169,7 +169,8 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
             EnvVarSpec("AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH", "4000", "Public 单条文本输入最大字符数；仅影响匿名公开工作流。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_AUDIO_ALLOWED_MIME_TYPES", "", "Public ASR 允许的音频 MIME 类型，逗号分隔；留空表示不限制。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_AUDIO_ALLOWED_EXTENSIONS", "", "Public ASR 允许的文件扩展名，逗号分隔；留空表示不限制。"),
-            EnvVarSpec("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "", "Public workflow 未配置 rate_limit 时的兜底限流，如 30/min；留空表示不启用兜底。"),
+            EnvVarSpec("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "30/min", "Public workflow 未配置 rate_limit 时的兜底限流，如 30/min；留空表示不启用兜底。"),
+            EnvVarSpec("AGENTCLAW_PUBLIC_COOKIE_SECURE", "", "Public 匿名用户 cookie 是否强制 Secure：true/false；留空时按请求协议或可信代理头判断。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_RATE_LIMIT_BACKEND", "memory", "Public 限流后端：memory、redis 或 auto；默认 memory。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_RATE_LIMIT_REDIS_REQUIRED", "false", "设为 true 时 Public 限流需要 Redis，不可用则返回 503。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_USER_TTL_SECONDS", "2592000", "Public 匿名用户 cookie 和会话归属记录 TTL 秒数。"),

@@ -54,12 +54,44 @@ const timeOptions = computed(() => [
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
   margin-bottom: 20px;
+}
+
+.header-left,
+.header-right {
+  min-width: 0;
+}
+
+.header-left {
+  flex: 1;
+}
+
+.header-right {
+  flex-shrink: 0;
 }
 
 .page-header h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .header-left,
+  .header-right {
+    width: 100%;
+  }
+
+  .header-right :deep(.n-space) {
+    justify-content: flex-start;
+  }
 }
 </style>

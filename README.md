@@ -22,7 +22,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/version-1.1.1-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.2-orange.svg" alt="Version">
 </p>
 
 ---

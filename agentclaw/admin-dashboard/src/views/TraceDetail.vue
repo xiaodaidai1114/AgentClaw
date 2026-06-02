@@ -1,12 +1,12 @@
 <template>
-  <div>
+  <div class="trace-detail-page">
     <PageHeader :breadcrumbs="breadcrumbs" @refresh="fetchData" />
 
     <n-spin :show="!trace">
       <template v-if="trace">
         <!-- 追踪概览 -->
         <n-card size="small" style="margin-bottom: 20px;">
-          <n-space align="center" :size="20">
+          <n-space class="trace-summary-space" align="center" :size="20">
             <n-tag :type="statusType(trace.status)" size="medium" round>{{ statusLabel(trace.status) }}</n-tag>
             <n-text>{{ t('traceDetail.workflow') }}: <n-text strong>{{ trace.workflow_id }}</n-text></n-text>
             <n-text>{{ t('traceDetail.duration') }}:
@@ -54,7 +54,7 @@
         <!-- 执行路径 -->
         <n-card v-if="trace.node_logs?.length" size="small" style="margin-bottom: 16px;">
           <template #header><n-text strong style="font-size: 13px;">{{ t('traceDetail.executionPath') }}</n-text></template>
-          <n-space :size="6" align="center" :wrap="true">
+          <n-space class="execution-path-space" :size="6" align="center" :wrap="true">
             <n-tag size="small" type="success" round>__start__</n-tag>
             <template v-for="node in trace.node_logs" :key="node.id">
               <n-text depth="3" style="font-size: 11px;">→</n-text>
@@ -82,7 +82,7 @@
               :type="nodeTimelineType(node)"
               style="cursor: pointer;" @click="selectNode(node)">
               <template #header>
-                <n-space :size="8" align="center">
+                <n-space class="timeline-header-space" :size="8" align="center">
                   <n-text strong style="font-size: 13px;">{{ node.name || node.id }}</n-text>
                   <n-tag :type="statusType(node.status)" size="tiny" round>{{ statusLabel(node.status) }}</n-tag>
                   <n-text :type="durColor(node.duration_ms)" style="font-size: 12px; font-weight: 600;">
@@ -90,11 +90,11 @@
                   </n-text>
                 </n-space>
               </template>
-              <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div class="timeline-node-body">
                 <n-progress type="line" :percentage="durPercent(node.duration_ms)"
                   :status="durProgressStatus(node.duration_ms)"
-                  :show-indicator="false" :height="3" style="max-width: 200px;" />
-                <n-space :size="16" style="font-size: 12px;">
+                  :show-indicator="false" :height="3" class="timeline-progress" />
+                <n-space class="timeline-node-meta" :size="16">
                   <n-text depth="3">{{ t('traceDetail.type') }}: <n-text code style="font-size: 11px;">{{ node.node_type }}</n-text></n-text>
                   <template v-if="getLLMLogs(node).length">
                     <n-text depth="3">{{ t('traceDetail.llmCount', { count: getLLMLogs(node).length }) }}</n-text>
@@ -106,7 +106,7 @@
 
             <n-timeline-item :type="trace.status === 'success' ? 'success' : 'error'" :time="formatTime(trace.end_time)">
               <template #header>
-                <n-space :size="8" align="center">
+                <n-space class="timeline-header-space" :size="8" align="center">
                   <n-text strong style="font-size: 13px;">{{ t('traceDetail.workflowEnd') }}</n-text>
                   <n-tag :type="statusType(trace.status)" size="tiny" round>{{ statusLabel(trace.status) }}</n-tag>
                   <n-text depth="3" style="font-size: 12px;">{{ t('traceDetail.totalDuration') }}: {{ formatDuration(trace.duration_ms) }}</n-text>
@@ -124,12 +124,14 @@
               <n-tag size="tiny" :bordered="false">JSON</n-tag>
             </n-space>
           </template>
-          <n-code :code="JSON.stringify(trace.input_data, null, 2)" language="json" />
+          <div class="code-scroll">
+            <n-code :code="JSON.stringify(trace.input_data, null, 2)" language="json" />
+          </div>
         </n-card>
 
         <!-- 错误信息 -->
         <n-alert v-if="trace.error" type="error" :title="t('traceDetail.errorInfo')" style="margin-bottom: 16px;">
-          <pre style="margin: 0; white-space: pre-wrap; font-size: 12px;">{{ trace.error }}</pre>
+          <pre class="trace-error-pre">{{ trace.error }}</pre>
         </n-alert>
 
         <!-- 用户输出 -->
@@ -140,7 +142,7 @@
               <n-tag size="tiny" :bordered="false" type="success">{{ t('traceDetail.userVisible') }}</n-tag>
             </n-space>
           </template>
-          <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.6;">{{ trace.output_data.answer }}</div>
+          <div class="trace-answer">{{ trace.output_data.answer }}</div>
         </n-card>
 
         <!-- 输出数据 -->
@@ -151,19 +153,21 @@
               <n-tag size="tiny" :bordered="false">JSON</n-tag>
             </n-space>
           </template>
-          <n-code :code="JSON.stringify(trace.output_data, null, 2)" language="json" />
+          <div class="code-scroll">
+            <n-code :code="JSON.stringify(trace.output_data, null, 2)" language="json" />
+          </div>
         </n-card>
       </template>
     </n-spin>
 
     <!-- 节点详情抽屉 -->
-    <n-drawer v-model:show="drawerVisible" :width="drawerWidth" placement="right">
+    <n-drawer v-model:show="drawerVisible" :width="responsiveDrawerWidth" placement="right">
       <div :style="resizeHandleStyle" @mousedown="onResizeMouseDown" />
       <n-drawer-content :title="t('traceDetail.nodeDetailTitle', { name: selectedNode?.name || selectedNode?.id || '' })" :native-scrollbar="false">
         <template v-if="selectedNode">
           <!-- 节点概览 -->
           <n-card size="small" style="margin-bottom: 16px;">
-            <n-space align="center" :size="16">
+            <n-space class="drawer-summary-space" align="center" :size="16">
               <n-tag :type="statusType(selectedNode.status)" size="medium" round>{{ statusLabel(selectedNode.status) }}</n-tag>
               <n-text>{{ t('traceDetail.type') }}: <n-text code>{{ selectedNode.node_type }}</n-text></n-text>
               <n-text>{{ t('traceDetail.duration') }}:
@@ -183,8 +187,8 @@
             </n-space>
             <n-card v-for="(llmLog, idx) in getLLMLogs(selectedNode)" :key="llmLog.id" size="small" style="margin-bottom: 10px;">
               <template #header>
-                <n-space justify="space-between" align="center" style="width: 100%;">
-                  <n-space :size="8" align="center">
+                <n-space class="llm-log-header" justify="space-between" align="center">
+                  <n-space class="llm-log-meta" :size="8" align="center">
                     <n-text v-if="getLLMLogs(selectedNode).length > 1" depth="3" style="font-size: 12px;">{{ t('traceDetail.callNumber', { count: idx + 1 }) }}</n-text>
                     <n-text code style="font-size: 12px;">{{ llmLog.model_id }}</n-text>
                   </n-space>
@@ -226,14 +230,18 @@
                       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>
                       {{ t('traceDetail.callArguments') }}
                     </div>
-                    <n-code :code="tc.arguments || '{}'" language="json" style="font-size: 12px;" />
+                    <div class="code-scroll">
+                      <n-code :code="tc.arguments || '{}'" language="json" style="font-size: 12px;" />
+                    </div>
                   </div>
                   <div v-if="getToolResult(llmLog, tc)" class="tool-call-section result-section" :class="getToolResultStatus(llmLog, tc)">
                     <div class="tool-section-label">
                       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
                       {{ t('traceDetail.returnResult') }}
                     </div>
-                    <n-code :code="truncateResult(getToolResult(llmLog, tc).result)" style="max-height: 300px; overflow-y: auto; font-size: 12px;" />
+                    <div class="code-scroll code-scroll--limited">
+                      <n-code :code="truncateResult(getToolResult(llmLog, tc).result)" style="font-size: 12px;" />
+                    </div>
                   </div>
                 </div>
               </template>
@@ -248,7 +256,9 @@
                 <n-tag size="tiny" :bordered="false">JSON</n-tag>
               </n-space>
             </template>
-            <n-code :code="JSON.stringify(selectedNode.input_data, null, 2)" language="json" />
+            <div class="code-scroll">
+              <n-code :code="JSON.stringify(selectedNode.input_data, null, 2)" language="json" />
+            </div>
           </n-card>
           <n-card v-if="selectedNode.output_data" size="small" style="margin-bottom: 10px;">
             <template #header>
@@ -257,10 +267,12 @@
                 <n-tag size="tiny" :bordered="false">JSON</n-tag>
               </n-space>
             </template>
-            <n-code :code="JSON.stringify(selectedNode.output_data, null, 2)" language="json" />
+            <div class="code-scroll">
+              <n-code :code="JSON.stringify(selectedNode.output_data, null, 2)" language="json" />
+            </div>
           </n-card>
           <n-alert v-if="selectedNode.error" type="error" :title="t('traceDetail.error')" style="margin-bottom: 10px;">
-            <pre style="margin: 0; white-space: pre-wrap; font-size: 12px;">{{ selectedNode.error }}</pre>
+            <pre class="trace-error-pre">{{ selectedNode.error }}</pre>
           </n-alert>
         </template>
       </n-drawer-content>
@@ -290,6 +302,7 @@ const trace = ref(null)
 const selectedNode = ref(null)
 const drawerVisible = ref(false)
 const { drawerWidth, resizeHandleStyle, onResizeMouseDown } = useResizableDrawer({ initial: 720, min: 400, max: 1200 })
+const responsiveDrawerWidth = computed(() => `min(${drawerWidth.value}px, 100vw)`)
 const breadcrumbs = computed(() => ([
   { text: t('traceDetail.dashboard'), to: '/dashboard?tab=traces' },
   { text: `${traceId.value.substring(0, 18)}...` },
@@ -398,6 +411,72 @@ onMounted(fetchData)
   gap: 16px;
 }
 
+.trace-detail-page {
+  min-width: 0;
+}
+
+.trace-summary-space,
+.execution-path-space,
+.timeline-header-space,
+.timeline-node-meta,
+.drawer-summary-space,
+.llm-log-header,
+.llm-log-meta {
+  min-width: 0;
+}
+
+.trace-summary-space :deep(.n-text),
+.execution-path-space :deep(.n-tag),
+.timeline-header-space :deep(.n-text),
+.timeline-node-meta :deep(.n-text),
+.drawer-summary-space :deep(.n-text),
+.llm-log-meta :deep(.n-text) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.timeline-node-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline-progress {
+  max-width: 200px;
+}
+
+.timeline-node-meta {
+  font-size: 12px;
+}
+
+.code-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.code-scroll--limited {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.trace-error-pre,
+.trace-answer {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trace-error-pre {
+  font-size: 12px;
+}
+
+.trace-answer {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* Tool call cards in drawer */
 .tool-call-card {
   margin-bottom: 12px;
@@ -419,10 +498,17 @@ onMounted(fetchData)
 .tool-call-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
   padding: 8px 12px;
   background: #f3f4f6;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.tool-call-header :deep(.n-text) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tool-call-index {
@@ -434,6 +520,7 @@ onMounted(fetchData)
 
 .tool-call-section {
   padding: 8px 12px;
+  min-width: 0;
 }
 
 .tool-section-label {
@@ -474,9 +561,44 @@ onMounted(fetchData)
   }
 }
 
+@media (max-width: 1024px) {
+  .trace-summary-space,
+  .execution-path-space,
+  .timeline-header-space,
+  .timeline-node-meta,
+  .drawer-summary-space,
+  .llm-log-header,
+  .llm-log-meta {
+    width: 100%;
+  }
+
+  .trace-summary-space,
+  .drawer-summary-space,
+  .llm-log-header {
+    align-items: flex-start !important;
+  }
+}
+
 @media (max-width: 640px) {
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .trace-summary-space,
+  .timeline-header-space,
+  .timeline-node-meta,
+  .drawer-summary-space,
+  .llm-log-header,
+  .llm-log-meta {
+    width: 100%;
+  }
+
+  .timeline-progress {
+    max-width: 100%;
+  }
+
+  .llm-log-header {
+    align-items: flex-start !important;
   }
 }
 </style>

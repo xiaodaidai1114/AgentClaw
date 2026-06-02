@@ -173,3 +173,49 @@ def test_public_user_and_owner_memory_fallback_is_bounded(monkeypatch):
 
     assert len(public_session._public_users) <= 1
     assert len(public_session._public_conversation_owners) <= 1
+
+
+def test_public_runtime_thread_id_is_scoped_by_owner_and_not_raw_conversation_id():
+    thread_1 = public_session.public_runtime_thread_id("wf", "owner-1", "conv-shared")
+    thread_2 = public_session.public_runtime_thread_id("wf", "owner-2", "conv-shared")
+
+    assert thread_1 != "conv-shared"
+    assert thread_1 != thread_2
+    assert thread_1.startswith("public:v1:")
+
+
+def test_default_public_rate_limit_is_enabled_when_env_is_unset(monkeypatch):
+    monkeypatch.delenv("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", raising=False)
+
+    assert public_access.default_public_rate_limit() == "30/min"
+
+
+def test_public_share_token_can_come_from_header_without_query_or_body():
+    request = SimpleNamespace(
+        query_params={},
+        headers={"x-agentclaw-share-token": "share-test"},
+    )
+
+    assert public_access.public_share_token_from_request(request, {}) == "share-test"
+
+
+def test_public_cookie_secure_can_be_forced_by_env(monkeypatch):
+    request = SimpleNamespace(url=SimpleNamespace(scheme="http"), headers={})
+
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_COOKIE_SECURE", "true")
+    assert public_session.public_cookie_secure(request) is True
+
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_COOKIE_SECURE", "false")
+    assert public_session.public_cookie_secure(request) is False
+
+
+def test_public_cookie_secure_uses_trusted_forwarded_proto(monkeypatch):
+    request = SimpleNamespace(
+        url=SimpleNamespace(scheme="http"),
+        headers={"x-forwarded-proto": "https"},
+    )
+
+    monkeypatch.delenv("AGENTCLAW_PUBLIC_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("AGENTCLAW_TRUST_PROXY_HEADERS", "true")
+
+    assert public_session.public_cookie_secure(request) is True

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import hmac
 import time
 from hashlib import sha256
 from urllib.parse import quote, urlencode
 
 from agentclaw.api.auth.token import AdminTokenManager
+from agentclaw.utils.security import safe_compare_digest
 
 
 DEFAULT_FILE_URL_TTL_SECONDS = 3600
@@ -18,6 +18,8 @@ def _signing_secret() -> bytes:
 
 
 def _signature(file_id: str, expires_at: int) -> str:
+    import hmac
+
     payload = f"agentclaw-file-v1:{file_id}:{expires_at}".encode("utf-8")
     return hmac.new(_signing_secret(), payload, sha256).hexdigest()
 
@@ -52,7 +54,7 @@ def verify_file_access_token(
     if expires_at < int(current):
         return False
     expected_sig = _signature(file_id, expires_at)
-    return hmac.compare_digest(provided_sig, expected_sig)
+    return safe_compare_digest(provided_sig, expected_sig)
 
 
 def get_signed_file_url(
