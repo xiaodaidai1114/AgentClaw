@@ -2,6 +2,23 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.1.4] - 2026-06-03
+
+**Changed**
+
+- 项目版本从 `1.1.3` 更新为 `1.1.4`，同步 `VERSION`、运行时 fallback 版本、Python 包元数据、`uv.lock`、Dashboard package 元数据和 README 徽章。
+
+**Fixed**
+
+- 修复公开智能体广场 API 会返回 workflow `share_token` 的问题；发布到广场的工作流改为通过广场发布状态匿名访问，未发布工作流仍要求 `share_token`。
+- 修复 Admin 认证失败时由认证中间件直接返回的 401 响应缺少 CSP、X-Frame-Options、Referrer-Policy 等安全响应头的问题。
+- 修复手机端公开多人会话关闭玩家聊天框后，聊天入口可能沿用桌面拖拽坐标而无法重新打开的问题。
+- 修复 LLM 自动降级可能把 embedding/rerank 等非对话模型选为 chat fallback，以及节点在 fallback 模型继续失败时重复降级同一模型导致近似无限重试的问题。
+
+**Tests**
+
+- 新增/扩展公开广场 token 泄露、Admin 认证失败安全响应头、手机端公开房间玩家聊天入口、LLM fallback 模型类型过滤和节点重复 fallback 退出的回归测试，并重新构建 Dashboard `dist` 产物。
+
 ## [1.1.3] - 2026-06-03
 
 **Added**

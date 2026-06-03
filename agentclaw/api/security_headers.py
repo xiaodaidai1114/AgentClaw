@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
@@ -29,17 +30,29 @@ SECURITY_HEADERS = {
 }
 
 
+def resolved_security_headers(*, csp: str | None = None) -> dict[str, str]:
+    headers = dict(SECURITY_HEADERS)
+    headers["content-security-policy"] = (
+        csp
+        or os.getenv("AGENTCLAW_CONTENT_SECURITY_POLICY", "").strip()
+        or DEFAULT_CONTENT_SECURITY_POLICY
+    )
+    return headers
+
+
+def apply_security_headers(response: Response, *, csp: str | None = None) -> Response:
+    for name, value in resolved_security_headers(csp=csp).items():
+        if name not in response.headers:
+            response.headers[name] = value
+    return response
+
+
 class SecurityHeadersMiddleware:
     """Add a conservative baseline of browser security headers."""
 
     def __init__(self, app: ASGIApp, *, csp: str | None = None):
         self.app = app
-        self.headers = dict(SECURITY_HEADERS)
-        self.headers["content-security-policy"] = (
-            csp
-            or os.getenv("AGENTCLAW_CONTENT_SECURITY_POLICY", "").strip()
-            or DEFAULT_CONTENT_SECURITY_POLICY
-        )
+        self.headers = resolved_security_headers(csp=csp)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:

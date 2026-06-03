@@ -707,7 +707,7 @@ export default {
     },
     publicRoomChatPanelStyle() {
       const position = this.publicRoomChatPosition || {}
-      if (this.publicRoomChatOpen && typeof window !== 'undefined' && window.innerWidth <= 768) return {}
+      if (typeof window !== 'undefined' && window.innerWidth <= 768) return {}
       if (position.x === null || position.y === null) return {}
       return { left: `${position.x}px`, top: `${position.y}px`, right: 'auto', bottom: 'auto' }
     },

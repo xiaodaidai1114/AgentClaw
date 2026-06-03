@@ -1752,6 +1752,9 @@ class LLMNode(BaseNode):
         
         if not auto_fallback:
             return None
+
+        if self._node_is_fallback:
+            return None
         
         # 确定失败阈值
         threshold = self.fallback_threshold
@@ -1764,6 +1767,9 @@ class LLMNode(BaseNode):
             fallback_model = self.fallback_model_id
             if not fallback_model and context.llm_manager:
                 fallback_model = context.llm_manager.fallback_id
+                is_chat_model = getattr(context.llm_manager, "_is_chat_model_id", None)
+                if callable(is_chat_model) and not is_chat_model(fallback_model):
+                    fallback_model = None
             
             if fallback_model and fallback_model != self.model_id:
                 self._node_is_fallback = True

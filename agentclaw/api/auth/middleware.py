@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response, JSONResponse
 
 from agentclaw.api.auth.token import AdminTokenManager
+from agentclaw.api.security_headers import apply_security_headers
 from agentclaw.logger.config import get_logger
 
 logger = get_logger(__name__)
@@ -111,9 +112,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if path.startswith("/_internal/"):
             if not self.allow_internal_relay:
-                return JSONResponse(
-                    status_code=404,
-                    content={"error": "Not found"},
+                return apply_security_headers(
+                    JSONResponse(
+                        status_code=404,
+                        content={"error": "Not found"},
+                    )
                 )
             return await self._handle_internal_relay(request, call_next, path)
 
@@ -144,9 +147,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         client_host = request.client.host if request.client else None
         if client_host not in ("127.0.0.1", "::1"):
-            return JSONResponse(
-                status_code=403,
-                content={"error": "Internal relay: access denied"},
+            return apply_security_headers(
+                JSONResponse(
+                    status_code=403,
+                    content={"error": "Internal relay: access denied"},
+                )
             )
 
         # 去掉 /_internal 前缀: /_internal/admin/workflows -> /admin/workflows
@@ -180,9 +185,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             await verify_admin_token(request)
         except HTTPException as e:
-            return JSONResponse(
-                status_code=e.status_code,
-                content={"error": e.detail}
+            return apply_security_headers(
+                JSONResponse(
+                    status_code=e.status_code,
+                    content={"error": e.detail}
+                )
             )
         
         return await call_next(request)

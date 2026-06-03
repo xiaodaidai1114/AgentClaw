@@ -217,7 +217,7 @@ async def create_public_room(workflow_id: str, request: Request, req: PublicRoom
     workflow = _get_workflow(workflow_id)
     if not workflow:
         return workflow_not_found_response(workflow_id)
-    share_error = verify_public_share_token(workflow, workflow_id, request)
+    share_error = verify_public_share_token(workflow, workflow_id, request, allow_square_public=True)
     if share_error:
         return share_error
     owner_id, owner_error = _require_public_page_owner(request, workflow_id)

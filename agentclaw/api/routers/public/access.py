@@ -166,6 +166,14 @@ def is_public_share_enabled(workflow: Any, workflow_id: str) -> bool:
     )
 
 
+def is_public_square_published(workflow: Any, workflow_id: str) -> bool:
+    return (
+        is_public_share_enabled(workflow, workflow_id)
+        and bool(getattr(workflow, "publish_to_square", False))
+        and bool(str(getattr(workflow, "public_share_token", "") or "").strip())
+    )
+
+
 def ensure_public_share_token(workflow: Any) -> str:
     token = str(getattr(workflow, "public_share_token", "") or "").strip()
     if not token:
@@ -204,9 +212,13 @@ def verify_public_share_token(
     workflow_id: str,
     request: Request,
     body: Optional[Mapping[str, Any]] = None,
+    *,
+    allow_square_public: bool = False,
 ) -> JSONResponse | None:
     if not is_public_share_enabled(workflow, workflow_id):
         return workflow_not_found_response(workflow_id)
+    if allow_square_public and is_public_square_published(workflow, workflow_id):
+        return None
     expected = str(getattr(workflow, "public_share_token", "") or "").strip()
     supplied = public_share_token_from_request(request, body)
     if not _constant_time_token_match(expected, supplied):

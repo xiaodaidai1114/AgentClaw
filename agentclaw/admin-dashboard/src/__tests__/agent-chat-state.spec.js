@@ -1364,6 +1364,21 @@ describe('AgentChat conversation runtime state', () => {
     expect(position.y).toBeLessThanOrEqual(window.innerHeight - 48 - 12)
   })
 
+  it('keeps the collapsed public room chat launcher visible on mobile after closing the chat panel', () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    try {
+      const style = AgentChat.computed.publicRoomChatPanelStyle.call({
+        publicRoomChatOpen: false,
+        publicRoomChatPosition: { x: 280, y: 620 },
+      })
+
+      expect(style).toEqual({})
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('reattaches a remounted conversation view to an active background run', () => {
     const key = agentRunManager.makeKey({
       isPublicMode: false,

@@ -440,6 +440,75 @@ def test_anonymous_public_workflow_run_requires_share_token_even_with_same_origi
     assert response.json()["code"] == "FORBIDDEN"
 
 
+def test_square_published_public_workflow_allows_page_access_without_share_token(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class SquareWorkflow:
+        id = "wf-square"
+        name = "Square workflow"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        publish_to_square = True
+        _input_schema = None
+
+        def get_input_schema(self):
+            return None
+
+        def get_form_config(self):
+            return None
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": f"square::{inputs['question']}"}],
+                    "__status__": "completed",
+                },
+                "metadata": {"trace_id": "trace-square"},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: SquareWorkflow() if workflow_id == "wf-square" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    detail = public_api_client.get("/api/public/workflows/wf-square")
+    session = public_api_client.post(
+        "/api/public/workflows/wf-square/session",
+        headers={
+            "origin": "http://testserver",
+            "sec-fetch-site": "same-origin",
+        },
+    )
+    run = public_api_client.post(
+        "/api/public/workflows/wf-square/run",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "conversation_id": "conv-square",
+            "user": "hello square",
+            "inputs": {"question": "hello square"},
+        },
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["workflow"]["id"] == "wf-square"
+    assert session.status_code == 200
+    assert run.status_code == 200
+    assert run.json()["answer"] == "square::hello square"
+
+
 def test_anonymous_public_workflow_run_rejects_other_users_conversation_id(
     public_api_client,
     monkeypatch,

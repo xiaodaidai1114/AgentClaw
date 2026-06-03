@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta
 
 from agentclaw.model.manager import LLMManager
 
@@ -83,3 +84,53 @@ def test_llm_manager_treats_legacy_vision_type_as_chat_with_vision_support(tmp_p
     assert manager.get_model("legacy_vision").model_type == "chat"
     assert manager.get_model("legacy_vision").supports_vision is True
     assert manager.get_vision_model_id() == "legacy_vision"
+
+
+def test_llm_manager_fallback_sequence_skips_non_chat_models(tmp_path):
+    models_path = tmp_path / "models.json"
+    models_path.write_text(
+        json.dumps(
+            {
+                "default": "primary",
+                "models": [
+                    {"id": "primary", "type": "chat", "model": "primary-model"},
+                    {"id": "embedding", "type": "embedding", "model": "embedding-model"},
+                    {"id": "rerank", "type": "rerank", "model": "rerank-model"},
+                    {"id": "backup", "type": "chat", "model": "backup-model"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = LLMManager(config_path=str(models_path))
+
+    assert manager._get_fallback_model_id("primary") == "backup"
+    assert manager._get_fallback_model_id("backup") is None
+
+
+def test_llm_manager_ignores_active_non_chat_fallback_state(tmp_path):
+    models_path = tmp_path / "models.json"
+    models_path.write_text(
+        json.dumps(
+            {
+                "default": "primary",
+                "fallback": "embedding",
+                "models": [
+                    {"id": "primary", "type": "chat", "model": "primary-model"},
+                    {"id": "embedding", "type": "embedding", "model": "embedding-model"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = LLMManager(config_path=str(models_path))
+    manager._fallback_state.is_fallback = True
+    manager._fallback_state.fallback_until = datetime.now() + timedelta(seconds=60)
+    manager._current_model_id = "embedding"
+
+    _client, config = manager._get_current_client()
+
+    assert config.id == "primary"
+    assert manager._fallback_state.is_fallback is False

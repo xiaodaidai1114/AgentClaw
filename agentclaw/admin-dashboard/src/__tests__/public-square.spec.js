@@ -16,7 +16,7 @@ describe('public agent square', () => {
     expect(appSource).toContain("const chatRouteNames = new Set(['AgentChat', 'BuiltinAgent', 'PublicAgent'])")
   })
 
-  it('renders the public square from a dedicated page and opens public agents with share tokens', () => {
+  it('renders the public square from a dedicated page and opens public agents without share tokens', () => {
     const squarePath = resolve(process.cwd(), 'src/views/PublicSquare.vue')
     expect(existsSync(squarePath)).toBe(true)
     const squareSource = readFileSync(squarePath, 'utf8')
@@ -25,7 +25,7 @@ describe('public agent square', () => {
     expect(squareSource).toContain('publicSquareApi.list')
     expect(squareSource).toContain('router.push({')
     expect(squareSource).toContain("name: 'PublicAgent'")
-    expect(squareSource).toContain('share_token: workflow.share_token')
+    expect(squareSource).not.toContain('workflow.share_token')
     expect(squareSource).toContain('public-square-grid')
     expect(apiSource).toContain('export const publicSquareApi')
     expect(apiSource).toContain("publicApi.get('/public/square/workflows'")

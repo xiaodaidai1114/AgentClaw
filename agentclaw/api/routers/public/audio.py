@@ -127,7 +127,7 @@ def _get_public_workflow_or_error(workflow_id: str, request: Request, body: dict
     workflow = WorkflowRegistry.get(workflow_id)
     if not workflow:
         return None, workflow_not_found_response(workflow_id)
-    share_error = verify_public_share_token(workflow, workflow_id, request, body)
+    share_error = verify_public_share_token(workflow, workflow_id, request, body, allow_square_public=True)
     if share_error:
         return None, share_error
     if not verify_public_page_session(request, workflow_id):

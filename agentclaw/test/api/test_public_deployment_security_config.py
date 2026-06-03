@@ -10,6 +10,14 @@ def _route_paths(app) -> set[str]:
     return {getattr(route, "path", "") for route in app.routes}
 
 
+def _assert_security_headers(response) -> None:
+    assert response.headers.get("content-security-policy")
+    assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("x-frame-options") == "DENY"
+    assert response.headers.get("permissions-policy")
+
+
 def test_server_security_env_defaults_keep_existing_route_surface(monkeypatch, tmp_path: Path):
     from agentclaw.api.server import AgentClawServer
 
@@ -42,6 +50,26 @@ def test_server_security_env_defaults_keep_existing_route_surface(monkeypatch, t
     assert "/api/scheduler/jobs" in paths
     assert "/api/channels/{channel_name}/webhook" in paths
     assert "/dashboard/{path:path}" in paths
+
+
+def test_admin_auth_failures_include_security_headers(monkeypatch):
+    from agentclaw.api.server import AgentClawServer
+    from agentclaw.test.conftest import ADMIN_TOKEN
+
+    monkeypatch.setenv("ADMIN_TOKEN", ADMIN_TOKEN)
+    server = AgentClawServer(enable_admin=True)
+    client = TestClient(server.app)
+
+    missing_token = client.get("/admin/workflows")
+    invalid_token = client.get(
+        "/admin/workflows",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+
+    assert missing_token.status_code == 401
+    _assert_security_headers(missing_token)
+    assert invalid_token.status_code == 401
+    _assert_security_headers(invalid_token)
 
 
 def test_server_security_env_can_disable_non_public_routes(monkeypatch, tmp_path: Path):

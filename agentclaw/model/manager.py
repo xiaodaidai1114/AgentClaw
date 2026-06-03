@@ -561,6 +561,12 @@ class LLMManager(BaseComponent):
         
         default_model = self.get_model()
         logger.info(f"LLMManager 初始化完成: workflow={workflow.id}, default={default_model.model}")
+
+    def _is_chat_model_id(self, model_id: Optional[str]) -> bool:
+        if not model_id:
+            return False
+        config = self._models_cache.get(model_id)
+        return bool(config and config.model_type == "chat")
     
     def _init_clients(self) -> None:
         """初始化所有模型的 LLM 客户端"""
@@ -691,14 +697,20 @@ class LLMManager(BaseComponent):
             if self._fallback_state.fallback_until and datetime.now() < self._fallback_state.fallback_until:
                 # _current_model_id 已经在降级时被设为降级模型，直接使用
                 fallback_id = self._current_model_id
-                if fallback_id and fallback_id in self._clients:
+                if fallback_id and fallback_id in self._clients and self._is_chat_model_id(fallback_id):
                     config = self._models_cache[fallback_id]
                     return self._clients[fallback_id], config
+                self._fallback_state.is_fallback = False
+                self._fallback_state.failure_count = 0
+                self._current_model_id = self.default_id
+                target_id = self._current_model_id or self.default_id
+                logger.warning(f"忽略非对话降级模型: {fallback_id}")
             else:
                 # 降级时间结束，恢复默认模型
                 self._fallback_state.is_fallback = False
                 self._fallback_state.failure_count = 0
                 self._current_model_id = self.default_id
+                target_id = self._current_model_id or self.default_id
                 logger.info("降级时间结束，恢复使用默认模型")
         
         if target_id in self._clients:
@@ -712,14 +724,15 @@ class LLMManager(BaseComponent):
     def _get_fallback_model_id(self, current_id: str) -> Optional[str]:
         """获取下一个降级模型 ID"""
         # 优先使用指定的 fallback
-        if self.fallback_id and self.fallback_id != current_id:
+        if self.fallback_id and self.fallback_id != current_id and self._is_chat_model_id(self.fallback_id):
             return self.fallback_id
         
         # 否则按顺序找下一个
         if current_id in self.model_ids:
             idx = self.model_ids.index(current_id)
-            if idx + 1 < len(self.model_ids):
-                return self.model_ids[idx + 1]
+            for next_id in self.model_ids[idx + 1:]:
+                if self._is_chat_model_id(next_id):
+                    return next_id
         
         return None
     
@@ -1964,7 +1977,7 @@ class LLMManager(BaseComponent):
     
     def force_fallback(self, reason: str = "手动触发") -> None:
         """强制切换到降级模型"""
-        if self.fallback_id:
+        if self.fallback_id and self._is_chat_model_id(self.fallback_id):
             self._fallback_state.is_fallback = True
             self._fallback_state.fallback_reason = reason
             self._fallback_state.fallback_until = datetime.now() + timedelta(seconds=self.fallback_duration)

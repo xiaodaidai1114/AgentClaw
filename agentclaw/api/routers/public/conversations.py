@@ -53,7 +53,7 @@ def _verify_public_conversation_access(
     workflow = _get_workflow(workflow_id)
     if not workflow:
         return None, workflow_not_found_response(workflow_id)
-    share_error = verify_public_share_token(workflow, workflow_id, request, body)
+    share_error = verify_public_share_token(workflow, workflow_id, request, body, allow_square_public=True)
     if share_error:
         return None, share_error
     if not verify_public_page_session(request, workflow_id):

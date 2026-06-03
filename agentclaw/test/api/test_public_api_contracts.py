@@ -166,7 +166,6 @@ def test_public_square_lists_only_published_public_workflows(public_api_client, 
                 "name": "Published workflow",
                 "description": "Visible in the public square",
                 "recommended_input": "Start here",
-                "share_token": "share-published",
                 "chat_audio": {
                     "enabled": True,
                     "speech_input_enabled": True,
@@ -176,6 +175,7 @@ def test_public_square_lists_only_published_public_workflows(public_api_client, 
         ]
     }
     assert "wf-private-share" not in response.text
+    assert "share-published" not in response.text
     assert "share-private" not in response.text
     assert "share-disabled" not in response.text
     assert "share-builtin" not in response.text

@@ -76,7 +76,6 @@ function openWorkflow(workflow) {
   router.push({
     name: 'PublicAgent',
     params: { id: workflow.id },
-    query: { share_token: workflow.share_token },
   })
 }
 

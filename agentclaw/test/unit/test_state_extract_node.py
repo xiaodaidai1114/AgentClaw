@@ -199,3 +199,38 @@ async def test_state_extract_node_does_not_force_zero_threshold_fallback():
         await node.execute({"user_input": "提醒我"}, context)
 
     assert context.llm_manager.calls == 1
+
+
+def test_llm_node_stops_fallback_after_fallback_model_fails():
+    from agentclaw.graph.context import WorkflowContext
+    from agentclaw.node import LLMNode
+
+    node = LLMNode(id="agent", fallback_threshold=1)
+    context = WorkflowContext()
+    context.llm_manager = FailingLLMManager()
+
+    first = node._handle_node_failure(RuntimeError("primary model failed"), context)
+    second = node._handle_node_failure(RuntimeError("backup model failed"), context)
+
+    assert first == "backup"
+    assert second is None
+
+
+def test_llm_node_rejects_non_chat_manager_fallback():
+    from types import SimpleNamespace
+
+    from agentclaw.graph.context import WorkflowContext
+    from agentclaw.node import LLMNode
+
+    node = LLMNode(id="agent", fallback_threshold=1)
+    context = WorkflowContext()
+    context.llm_manager = SimpleNamespace(
+        auto_fallback=True,
+        fallback_threshold=1,
+        fallback_id="embedding",
+        _is_chat_model_id=lambda model_id: False,
+    )
+
+    fallback = node._handle_node_failure(RuntimeError("primary model failed"), context)
+
+    assert fallback is None
