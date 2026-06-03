@@ -296,6 +296,7 @@ class WorkflowService:
             "recommended_input": getattr(workflow, "recommended_input", "") or "",
             "public_share_enabled": False if is_builtin else bool(getattr(workflow, "public_share_enabled", False)),
             "public_share_token": "" if is_builtin else (getattr(workflow, "public_share_token", "") or ""),
+            "publish_to_square": False if is_builtin else bool(getattr(workflow, "publish_to_square", False)),
             "rate_limit": getattr(workflow, "rate_limit", "") or "",
             "public_conversation_limit": getattr(workflow, "public_conversation_limit", 20) or 20,
             "public_message_limit": getattr(workflow, "public_message_limit", 200) or 200,

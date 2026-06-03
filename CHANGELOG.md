@@ -2,6 +2,32 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.1.3] - 2026-06-03
+
+**Added**
+
+- 新增公开智能体广场入口，发布到广场的公开智能体可在独立 `/square` 页面匿名浏览和访问；未发布到广场的公开智能体仍需要有效 `share_token`。
+- 工作流公开配置新增“发布到广场”开关，广场列表只暴露显式发布的公开工作流，并返回最小公开元数据与语音能力标识。
+- 公开工作流页面新增公开多人会话：用户可输入昵称创建房间、分享房间链接，其他用户可用昵称加入同一个对话，房间会同步成员、输入中状态、会话消息和安全裁剪后的节点摘要。
+- 公开多人会话新增独立玩家聊天框，聊天消息不触发智能体运行，使用单独表保存，并支持拖动、未读提示和房间状态轮询/事件流同步。
+- 新增公开房间音频接口，房间模式下 ASR/TTS 走 `/api/public/rooms/{room_id}/speech-to-text` 与 `/api/public/rooms/{room_id}/text-to-speech`，通过房间成员身份校验而不是 workflow share token 校验。
+
+**Changed**
+
+- 项目版本从 `1.1.2` 更新为 `1.1.3`，同步 `VERSION`、运行时 fallback 版本、Python 包元数据、`uv.lock`、Dashboard package 元数据和 README 徽章。
+- 公开房间功能强制依赖 PostgreSQL 与 Redis；缺少基础设施时返回明确的 `PUBLIC_ROOM_INFRA_REQUIRED` 错误，避免回退到不可靠的内存多人状态。
+- 公开页面会在普通分享、广场入口和公开房间入口之间区分授权方式：普通公开工作流继续使用 share token，公开房间使用 room token 打开页面 session，后续房间 API 使用 same-origin public session 与成员关系校验。
+- 公开聊天页在手机端默认隐藏最近会话、参数配置和侧栏类内容，改用顶部按钮、抽屉和面板展示，尽量保留主对话区域。
+- Dashboard 执行追踪列表改为使用明确的横向滚动宽度，减少桌面端表格宽度计算不稳定导致只显示追踪 ID 的问题。
+
+**Fixed**
+
+- 修复执行追踪管理页在非手机端只露出追踪 ID、原有工作流/状态/耗时/Token/开始时间/操作列不可见的问题。
+
+**Tests**
+
+- 新增/扩展公开广场、公开房间创建/加入/运行/事件流、玩家聊天、房间音频、公开音频、上传限制、安全配置、Dashboard 手机端适配、执行追踪列表和 AgentChat 状态回归测试，并重新构建 Dashboard `dist` 产物。
+
 ## [1.1.2] - 2026-06-01
 
 **Changed**

@@ -55,7 +55,7 @@
     <n-card class="trace-table-card">
       <div class="table-scroll">
         <n-data-table :columns="columns" :data="traces" :loading="loading" :bordered="false"
-          :row-key="row => row.id" size="small" :row-props="rowProps" scroll-x="max-content" />
+          :row-key="row => row.id" size="small" :row-props="rowProps" :scroll-x="traceTableScrollX" />
       </div>
       <n-pagination
         v-if="total > 0"
@@ -130,6 +130,7 @@ const statusMap = computed(() => ({
   cancelled: t('traces.cancelled'),
 }))
 const statusTypeMap = { success: 'success', error: 'error', timeout: 'warning', running: 'info' }
+const traceTableScrollX = 970
 
 // 基于 summary 平均耗时动态计算颜色
 const avgDuration = computed(() => summary.value?.avg_duration_ms || 0)

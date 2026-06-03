@@ -19,12 +19,20 @@ from agentclaw.api.routers.public.session import verify_public_page_session
 from agentclaw.api.schemas.audio import SpeechToTextResponse, TextToSpeechRequest
 from agentclaw.api.schemas.common import ErrorCode
 from agentclaw.api.services import audio_synthesis
+from agentclaw.api.services.public_room_service import (
+    PUBLIC_ROOM_INFRA_ERROR,
+    PublicRoomAccessError,
+    PublicRoomInfraError,
+    get_public_room_service,
+)
 from agentclaw.api.upload_limits import UploadTooLarge, enforce_upload_content_length, read_upload_file_limited
 from agentclaw.audio import AudioArtifact, AudioService
 from agentclaw.database import get_database
 
 
-router = APIRouter(prefix="/public/workflows/{workflow_id}", tags=["public-audio"])
+router = APIRouter(tags=["public-audio"])
+workflow_audio_router = APIRouter(prefix="/public/workflows/{workflow_id}")
+room_audio_router = APIRouter(prefix="/public/rooms/{room_id}")
 _memory_tts_cache = audio_synthesis._memory_tts_cache
 
 
@@ -63,6 +71,10 @@ def _public_max_tts_chars() -> int:
 
 def public_speech_to_text_path_prefix() -> str:
     return "/api/public/workflows/*/speech-to-text"
+
+
+def public_room_speech_to_text_path_prefix() -> str:
+    return "/api/public/rooms/*/speech-to-text"
 
 
 def _csv_env_values(name: str) -> set[str]:
@@ -123,6 +135,39 @@ def _get_public_workflow_or_error(workflow_id: str, request: Request, body: dict
     return workflow, None
 
 
+async def _get_public_room_workflow_or_error(room_id: str, request: Request):
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.routers.public.session import public_owner_id_from_request
+
+    try:
+        service = get_public_room_service()
+        room = await service.get_room(room_id)
+        if not room:
+            return None, None, JSONResponse(
+                status_code=404,
+                content={"error": "Public room not found", "code": ErrorCode.NOT_FOUND},
+            )
+        workflow_id = str(room.get("workflow_id") or "")
+        if not verify_public_page_session(request, workflow_id):
+            return None, None, forbidden_response("Public room audio requires a same-origin public page session")
+        owner_id = public_owner_id_from_request(request)
+        if not owner_id:
+            return None, None, forbidden_response("Public room audio requires an anonymous public user")
+        await service.require_member(room_id, owner_id)
+    except PublicRoomInfraError as exc:
+        return None, None, JSONResponse(
+            status_code=503,
+            content={"error": str(exc), "code": PUBLIC_ROOM_INFRA_ERROR},
+        )
+    except PublicRoomAccessError as exc:
+        return None, None, forbidden_response(str(exc))
+
+    workflow = WorkflowRegistry.get(workflow_id)
+    if not workflow:
+        return None, None, workflow_not_found_response(workflow_id)
+    return workflow, room, None
+
+
 def _feature_disabled_response(feature: str) -> JSONResponse:
     return JSONResponse(
         status_code=403,
@@ -130,7 +175,7 @@ def _feature_disabled_response(feature: str) -> JSONResponse:
     )
 
 
-@router.post("/speech-to-text", response_model=SpeechToTextResponse, summary="Transcribe public workflow audio")
+@workflow_audio_router.post("/speech-to-text", response_model=SpeechToTextResponse, summary="Transcribe public workflow audio")
 async def public_speech_to_text(
     workflow_id: str,
     request: Request,
@@ -169,7 +214,47 @@ async def public_speech_to_text(
     return SpeechToTextResponse(text=text)
 
 
-@router.post("/text-to-speech", summary="Synthesize public workflow speech")
+@room_audio_router.post("/speech-to-text", response_model=SpeechToTextResponse, summary="Transcribe public room audio")
+async def public_room_speech_to_text(
+    room_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    workflow, room, access_error = await _get_public_room_workflow_or_error(room_id, request)
+    if access_error:
+        return access_error
+    workflow_id = str(room.get("workflow_id") or "")
+    rate_error = check_public_rate_limit(workflow, workflow_id, request, "room-speech-to-text")
+    if rate_error:
+        return rate_error
+
+    config = _chat_audio(workflow)
+    if not bool(config.get("enabled")) or not bool(config.get("speech_input_enabled")):
+        return _feature_disabled_response("speech input")
+
+    validation_error = _validate_public_audio_file(file)
+    if validation_error:
+        return validation_error
+
+    max_size = _public_max_audio_bytes()
+    try:
+        enforce_upload_content_length(request, max_size)
+        data = await read_upload_file_limited(file, max_size)
+    except UploadTooLarge:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "Audio file is too large", "code": ErrorCode.INVALID_REQUEST},
+        )
+
+    service = _resolve_audio_service(request)
+    text = await service.transcribe(
+        AudioArtifact(data=data, mime_type=file.content_type, filename=file.filename),
+        model_id=str(config.get("speech2text_model_id") or "") or None,
+    )
+    return SpeechToTextResponse(text=text)
+
+
+@workflow_audio_router.post("/text-to-speech", summary="Synthesize public workflow speech")
 async def public_text_to_speech(
     workflow_id: str,
     request: Request,
@@ -206,3 +291,47 @@ async def public_text_to_speech(
         database_getter=get_database,
     )
     return Response(content=data, media_type=mime_type)
+
+
+@room_audio_router.post("/text-to-speech", summary="Synthesize public room speech")
+async def public_room_text_to_speech(
+    room_id: str,
+    request: Request,
+    body: TextToSpeechRequest,
+):
+    workflow, room, access_error = await _get_public_room_workflow_or_error(room_id, request)
+    if access_error:
+        return access_error
+    workflow_id = str(room.get("workflow_id") or "")
+    rate_error = check_public_rate_limit(workflow, workflow_id, request, "room-text-to-speech")
+    if rate_error:
+        return rate_error
+
+    config = _chat_audio(workflow)
+    if not bool(config.get("enabled")) or not bool(config.get("tts_enabled")):
+        return _feature_disabled_response("text-to-speech")
+
+    text = body.text or ""
+    max_chars = _public_max_tts_chars()
+    if len(text) > max_chars:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": f"Text exceeds public text-to-speech limit ({max_chars} characters)",
+                "code": ErrorCode.INVALID_REQUEST,
+            },
+        )
+
+    service = _resolve_audio_service(request)
+    data, mime_type = await audio_synthesis.synthesize_with_cache(
+        service,
+        text=text,
+        voice=str(config.get("tts_voice") or ""),
+        model_id=str(config.get("tts_model_id") or ""),
+        database_getter=get_database,
+    )
+    return Response(content=data, media_type=mime_type)
+
+
+router.include_router(workflow_audio_router)
+router.include_router(room_audio_router)

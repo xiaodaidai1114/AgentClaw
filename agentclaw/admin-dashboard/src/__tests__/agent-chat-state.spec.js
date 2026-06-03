@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { shallowMount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import AgentChat from '../views/AgentChat.vue'
 import ChatMessage from '../components/chat/ChatMessage.vue'
-import { buildWorkflowRunInputs, clearAdminToken, setAdminToken } from '../api'
+import ChatInput from '../components/chat/ChatInput.vue'
+import { buildWorkflowRunInputs, clearAdminToken, publicRoomsApi, setAdminToken } from '../api'
 import { agentRunManager } from '../utils/agentRunManager'
 
 const makeMountedCtx = (overrides = {}) => ({
@@ -44,6 +46,7 @@ const makeMountedCtx = (overrides = {}) => ({
 
 describe('AgentChat conversation runtime state', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     agentRunManager.clear()
   })
 
@@ -612,6 +615,182 @@ describe('AgentChat conversation runtime state', () => {
     expect(AgentChat.computed.ttsAvailable.call(ctx)).toBe(true)
   })
 
+  it('sends public room player chat without running the agent while the room is busy', async () => {
+    const sendSpy = vi.spyOn(publicRoomsApi, 'sendChat').mockResolvedValue({
+      id: 'chat-1',
+      room_id: 'room-1',
+      nickname: '玩家A',
+      content: '玩家聊天',
+      created_at: 1710000000000,
+    })
+    const runSpy = vi.spyOn(publicRoomsApi, 'run').mockResolvedValue({})
+    const ctx = {
+      isPublicRoomMode: true,
+      publicRoomJoined: true,
+      publicRoomBusy: true,
+      publicRoomId: 'room-1',
+      publicRoomChatDraft: ' 玩家聊天 ',
+      publicRoomChatSending: false,
+      publicRoomChatError: '',
+      publicRoomChatMessages: [],
+      publicRoomChatLastId: '',
+      publicRoomChatOpen: false,
+      publicRoomChatUnread: 0,
+      $nextTick: (fn) => fn(),
+      scrollPublicRoomChatToBottom: vi.fn(),
+      applyPublicRoomChatMessages: AgentChat.methods.applyPublicRoomChatMessages,
+      openPublicRoomChat: AgentChat.methods.openPublicRoomChat,
+    }
+
+    await AgentChat.methods.sendPublicRoomChatMessage.call(ctx)
+
+    expect(sendSpy).toHaveBeenCalledWith('room-1', '玩家聊天')
+    expect(runSpy).not.toHaveBeenCalled()
+    expect(ctx.publicRoomChatDraft).toBe('')
+    expect(ctx.publicRoomChatMessages).toHaveLength(1)
+    expect(ctx.publicRoomChatOpen).toBe(true)
+  })
+
+  it('keeps the public room prompt draft editable while the agent is running', () => {
+    const ctx = {
+      workflowLoadError: '',
+      isPublicRoomMode: true,
+      publicRoomJoined: true,
+      publicRoomBusy: true,
+      isInitializing: false,
+      conversationId: 'conv-room',
+      userInputFieldName: 'user_input',
+      workflowStatus: 'running',
+      humanWaitingFor: '',
+    }
+
+    expect(AgentChat.computed.inputEnabled.call(ctx)).toBe(true)
+  })
+
+  it('does not stop or send a public room prompt draft while the agent is running', async () => {
+    const runSpy = vi.spyOn(publicRoomsApi, 'run').mockResolvedValue({})
+    const ctx = {
+      isStreaming: true,
+      isInitializing: false,
+      isPublicRoomMode: true,
+      publicRoomJoined: true,
+      publicRoomBusy: true,
+      inputText: '等会儿发送',
+      abortRequest: vi.fn(async () => {}),
+      runPublicRoomMessage: AgentChat.methods.runPublicRoomMessage,
+    }
+
+    await AgentChat.methods.sendMessage.call(ctx)
+
+    expect(ctx.abortRequest).not.toHaveBeenCalled()
+    expect(runSpy).not.toHaveBeenCalled()
+    expect(ctx.inputText).toBe('等会儿发送')
+  })
+
+  it('keeps public room text editable but blocks submit controls while streaming', async () => {
+    const wrapper = shallowMount(ChatInput, {
+      props: {
+        modelValue: '等会儿发送',
+        enabled: true,
+        isStreaming: true,
+        canStopStreaming: false,
+      },
+      global: {
+        mocks: { $t: (key) => key },
+      },
+    })
+
+    const textarea = wrapper.find('textarea')
+    expect(textarea.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button.btn-send').attributes('disabled')).toBeDefined()
+
+    const preventDefault = vi.fn()
+    await textarea.trigger('keydown.enter', {
+      shiftKey: false,
+      preventDefault,
+    })
+
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('send')).toBeFalsy()
+  })
+
+  it('streams public room agent output through the streaming buffer without appending a duplicate assistant message', () => {
+    const ctx = {
+      isStreaming: false,
+      workflowStatus: 'idle',
+      thinkingStatus: { text: 'running' },
+      messages: [{ role: 'user', content: 'hello' }],
+      streamingContent: '',
+      publicRoomStreamingMessageId: '',
+      publicRoomId: 'room-1',
+      scrollToBottom: vi.fn(),
+    }
+
+    AgentChat.methods.appendPublicRoomStreamingDelta.call(ctx, {
+      message_id: 'message-1',
+      delta: 'answer',
+    })
+
+    expect(ctx.isStreaming).toBe(true)
+    expect(ctx.workflowStatus).toBe('running')
+    expect(ctx.thinkingStatus).toBe(null)
+    expect(ctx.streamingContent).toBe('answer')
+    expect(ctx.messages).toEqual([{ role: 'user', content: 'hello' }])
+  })
+
+  it('applies public room node events as safe process summaries', () => {
+    const ctx = {
+      publicRoomId: 'room-1',
+      publicRoomRunInProgress: false,
+      workflowStatus: 'idle',
+      isStreaming: false,
+      streamingContent: '',
+      reasoningContent: '',
+      nodeSteps: [],
+      currentToolCalls: [],
+      todoItems: [],
+      publicRoomStreamingMessageId: '',
+      thinkingStatus: null,
+      processCollapsed: true,
+      messages: [{ role: 'user', content: 'hello' }],
+      ensureProcessVisibleForFirstRun: AgentChat.methods.ensureProcessVisibleForFirstRun,
+      applyPublicRoomNodeStarted: AgentChat.methods.applyPublicRoomNodeStarted,
+      applyPublicRoomNodeFinished: AgentChat.methods.applyPublicRoomNodeFinished,
+      localizeNodeStep: AgentChat.methods.localizeNodeStep,
+      getNodeTypeLabel: AgentChat.methods.getNodeTypeLabel,
+      scrollToBottom: vi.fn(),
+      $t: (key, params = {}) => params.nodeId || key,
+    }
+
+    AgentChat.methods.handlePublicRoomEvent.call(ctx, {
+      room_id: 'room-1',
+      event: 'agent_node_started',
+      node_id: 'agent',
+      title: '识别玩家想玩的海龟汤类型',
+      node_type: 'llm',
+    })
+    AgentChat.methods.handlePublicRoomEvent.call(ctx, {
+      room_id: 'room-1',
+      event: 'agent_node_finished',
+      node_id: 'agent',
+      status: 'succeeded',
+      elapsed_time: 0.012,
+      outputs: { secret: 'hidden' },
+    })
+
+    expect(ctx.isStreaming).toBe(true)
+    expect(ctx.nodeSteps).toHaveLength(1)
+    expect(ctx.nodeSteps[0]).toMatchObject({
+      id: 'agent',
+      name: '识别玩家想玩的海龟汤类型',
+      status: 'succeeded',
+      elapsed: '12ms',
+    })
+    expect(ctx.nodeSteps[0].inputs).toBe(null)
+    expect(ctx.nodeSteps[0].outputs).toBe(null)
+    expect(ctx.processCollapsed).toBe(false)
+  })
+
   it('validates chat input before sending', async () => {
     const ctx = {
       inputText: '<script>alert(1)</script>',
@@ -1003,6 +1182,30 @@ describe('AgentChat conversation runtime state', () => {
     expect(AgentChat.computed.visibleMessages.call(ctx)).toEqual(ctx.messages)
   })
 
+  it('does not render an empty streaming placeholder after finalizing an assistant message', () => {
+    const ctx = {
+      isStreaming: true,
+      isCompressingContext: false,
+      isPublicRoomMode: false,
+      messages: [
+        { role: 'user', content: 'start' },
+        { role: 'assistant', content: 'final answer', nodeSteps: [{ id: 'agent', status: 'succeeded' }] },
+      ],
+      streamingContent: '',
+      reasoningContent: '',
+      nodeSteps: [],
+      currentToolCalls: [],
+      todoItems: [],
+      thinkingStatus: null,
+    }
+
+    expect(AgentChat.computed.showStreamingMessage.call(ctx)).toBe(false)
+
+    ctx.thinkingStatus = { text: 'running' }
+
+    expect(AgentChat.computed.showStreamingMessage.call(ctx)).toBe(true)
+  })
+
   it('removes deleted conversations from local cache instead of merging them back', async () => {
     localStorage.clear()
     localStorage.setItem('agent_conversations_workflow-1', JSON.stringify([
@@ -1102,6 +1305,63 @@ describe('AgentChat conversation runtime state', () => {
     expect(appSource).toContain("'BuiltinAgent'")
     expect(appSource).toContain("'PublicAgent'")
     expect(appSource).toContain('route.fullPath')
+  })
+
+  it('does not remount the public agent page when removing share tokens from the URL', () => {
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+
+    expect(appSource).toContain('publicAgentRouteViewKey')
+    expect(appSource).toContain("routeName === 'PublicAgent'")
+    expect(appSource).toContain('delete query.share_token')
+    expect(appSource).toContain('delete query.token')
+    expect(appSource).toContain('route.path')
+  })
+
+  it('keeps a single visible desktop copy link action in public room mode', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+    const desktopHeader = source.match(/<div v-else class="public-header desktop-public-header">([\s\S]*?)<\/div>\s*<\/div>\s*<div class="messages-container"/)?.[1] || ''
+    const roomBar = source.match(/<div v-if="isPublicRoomMode" class="public-room-bar">([\s\S]*?)<\/div>\s*<div v-if="hasFormFields"/)?.[1] || ''
+
+    expect(desktopHeader).not.toContain('复制房间链接')
+    expect(roomBar).toContain('复制链接')
+  })
+
+  it('keeps the visible chat input textarea opaque without adding an inner border', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatInput.vue'), 'utf8')
+    const styleMatch = source.match(/\.input-textarea\s*\{([\s\S]*?)\}/)
+
+    expect(styleMatch?.[1] || '').toContain('background: var(--bg-app, #fff)')
+    expect(styleMatch?.[1] || '').toContain('border: none')
+    expect(styleMatch?.[1] || '').not.toContain('border: 1px')
+    expect(styleMatch?.[1] || '').not.toContain('background: transparent')
+  })
+
+  it('keeps public room inputs and secondary action opaque', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+    const roomNicknameInput = source.match(/\.public-room-modal input\s*\{([\s\S]*?)\}/)?.[1] || ''
+    const roomSecondaryAction = source.match(/\.public-room-secondary\s*\{([\s\S]*?)\}/)?.[1] || ''
+    const roomChatInput = source.match(/\.public-room-chat-form input\s*\{([\s\S]*?)\}/)?.[1] || ''
+
+    expect(roomNicknameInput).toContain('background: #fff')
+    expect(roomNicknameInput).toContain('color: var(--text-main, #18181b)')
+    expect(roomNicknameInput).toContain('border: 1px solid var(--border-base, #e4e4e7)')
+    expect(roomSecondaryAction).toContain('background: #fff')
+    expect(roomSecondaryAction).toContain('color: var(--text-sec, #52525b)')
+    expect(roomSecondaryAction).toContain('border-color: var(--border-base, #e4e4e7)')
+    expect(roomChatInput).toContain('background: #fff')
+    expect(roomChatInput).toContain('color: var(--text-main, #18181b)')
+    expect(roomChatInput).toContain('border: 1px solid var(--border-base, #e4e4e7)')
+  })
+
+  it('constrains dragged public room chat launcher position while collapsed', () => {
+    const ctx = {
+      publicRoomChatOpen: false,
+    }
+
+    const position = AgentChat.methods.constrainPublicRoomChatPosition.call(ctx, 9999, 9999)
+
+    expect(position.x).toBeLessThanOrEqual(window.innerWidth - 92 - 12)
+    expect(position.y).toBeLessThanOrEqual(window.innerHeight - 48 - 12)
   })
 
   it('reattaches a remounted conversation view to an active background run', () => {
@@ -1634,6 +1894,61 @@ describe('AgentChat conversation runtime state', () => {
     AgentChat.methods.ensureProcessVisibleForFirstRun.call(ctx)
 
     expect(ctx.processCollapsed).toBe(true)
+  })
+
+  it('keeps public shared agent process summaries without exposing detail expansion', async () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain(':process-collapsed="isPublicMode ? false : processCollapsed"')
+    expect(source).toContain(':process-interactive="!isPublicMode"')
+    expect(source).toContain(':nodeSteps="nodeSteps"')
+
+    const msg = {
+      role: 'assistant',
+      content: '完成',
+      timestamp: Date.now(),
+      nodeSteps: [
+        {
+          id: 'agent',
+          name: '识别玩家想玩的海龟汤类型',
+          status: 'succeeded',
+          elapsed: '16.6s',
+          expanded: true,
+          inputs: { hidden: 'secret input' },
+          outputs: { hidden: 'secret output' },
+          segments: [
+            { type: 'reasoning', content: 'secret reasoning', expanded: true },
+            { type: 'tool', name: 'secret_tool', arguments: { query: 'secret query' }, elapsed: '1ms' },
+          ],
+        },
+      ],
+    }
+    const wrapper = shallowMount(ChatMessage, {
+      props: {
+        msg,
+        processCollapsed: false,
+        processInteractive: false,
+      },
+      global: {
+        stubs: { JsonCodeBlock: true, ToolDetailsPanel: true },
+        mocks: { $t: (key, params) => params?.count ? `${key}:${params.count}` : key },
+      },
+    })
+
+    expect(wrapper.text()).toContain('识别玩家想玩的海龟汤类型')
+    expect(wrapper.text()).not.toContain('secret input')
+    expect(wrapper.text()).not.toContain('secret output')
+    expect(wrapper.text()).not.toContain('secret reasoning')
+    expect(wrapper.text()).not.toContain('secret_tool')
+    await wrapper.find('.mini-thinking-header').trigger('click')
+    expect(msg.nodeSteps[0].expanded).toBe(true)
+    expect(wrapper.emitted('toggle-process-view')).toBeFalsy()
+
+    const publicCtx = { isStreaming: false, isPublicRoomMode: false, messages: [msg] }
+    expect(AgentChat.methods.getRenderableMessages.call(publicCtx)[0].nodeSteps).toHaveLength(1)
+
+    const roomCtx = { ...publicCtx, isPublicRoomMode: true }
+    expect(AgentChat.methods.getRenderableMessages.call(roomCtx)[0].nodeSteps).toHaveLength(1)
   })
 
 

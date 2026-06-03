@@ -70,11 +70,11 @@
             </button>
             <button
               class="btn-send"
-              :class="{ streaming: isStreaming, ready: !isStreaming && canSend }"
-              :disabled="isStreaming ? false : !canSend"
+              :class="{ streaming: canStop, ready: !isStreaming && canSend }"
+              :disabled="!canSubmit"
               @click="$emit('send')"
             >
-              <svg v-if="isStreaming" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1"/></svg>
+              <svg v-if="canStop" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1"/></svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
             </button>
           </div>
@@ -92,6 +92,7 @@ export default {
     placeholder: { type: String, default: '' },
     enabled: { type: Boolean, default: true },
     isStreaming: { type: Boolean, default: false },
+    canStopStreaming: { type: Boolean, default: true },
     contextDisplay: { type: String, default: '0' },
     contextUsed: { type: Number, default: 0 },
     contextLimit: { type: Number, default: 128000 },
@@ -114,6 +115,12 @@ export default {
     },
     canSend() {
       return this.enabled && this.text.trim() && !this.inputError
+    },
+    canStop() {
+      return this.isStreaming && this.canStopStreaming
+    },
+    canSubmit() {
+      return this.canStop || (!this.isStreaming && this.canSend)
     },
     normalizedInputModes() {
       return Array.isArray(this.inputModes) && this.inputModes.length
@@ -164,8 +171,9 @@ export default {
       el.style.height = Math.min(Math.max(el.scrollHeight, 48), 200) + 'px'
     },
     onEnter(e) {
-      if (!e.shiftKey && this.canSend) {
-        e.preventDefault()
+      if (e.shiftKey) return
+      e.preventDefault()
+      if (!this.isStreaming && this.canSend) {
         this.$emit('send')
       }
     },
@@ -257,8 +265,8 @@ export default {
 .file-remove:hover { color: #ef4444; }
 
 .input-textarea {
-  width: 100%; border: none; background: transparent; resize: none;
-  font-size: 15px; outline: none; font-family: inherit; line-height: 1.5;
+  width: 100%; border: none; background: var(--bg-app, #fff); resize: none;
+  border-radius: 0; font-size: 15px; outline: none; font-family: inherit; line-height: 1.5;
   color: var(--text-main, #18181b); max-height: 200px; overflow-y: auto;
   padding: 0 4px; min-height: 48px;
 }

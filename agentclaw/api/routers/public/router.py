@@ -11,6 +11,8 @@ from agentclaw.api.routers.public.upload import router as upload_router
 from agentclaw.api.routers.public.files import router as files_router
 from agentclaw.api.routers.public.conversations import router as conversations_router
 from agentclaw.api.routers.public.audio import router as audio_router
+from agentclaw.api.routers.public.square import router as square_router
+from agentclaw.api.routers.public.rooms import router as rooms_router
 
 router = APIRouter(prefix="/api")
 
@@ -19,3 +21,5 @@ router.include_router(upload_router)
 router.include_router(files_router)
 router.include_router(conversations_router)
 router.include_router(audio_router)
+router.include_router(square_router)
+router.include_router(rooms_router)

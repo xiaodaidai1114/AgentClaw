@@ -96,6 +96,34 @@ def test_dashboard_public_chat_mode_only_serves_chat_spa_paths(monkeypatch, tmp_
     assert settings.status_code == 404
 
 
+def test_square_entrypoint_is_separate_from_admin_dashboard(monkeypatch, tmp_path: Path):
+    from agentclaw.api.server import AgentClawServer
+
+    monkeypatch.setenv("AGENTCLAW_ENABLE_ADMIN_API", "false")
+    monkeypatch.setenv("AGENTCLAW_ENABLE_DASHBOARD", "true")
+    monkeypatch.setenv("AGENTCLAW_DASHBOARD_MODE", "public-chat")
+
+    dashboard_dir = tmp_path / "dashboard"
+    assets_dir = dashboard_dir / "dist" / "assets"
+    assets_dir.mkdir(parents=True)
+    (dashboard_dir / "dist" / "index.html").write_text("<html>square</html>", encoding="utf-8")
+
+    server = AgentClawServer(enable_admin=True)
+    server.admin_dashboard_dir = dashboard_dir
+
+    client = TestClient(server.app)
+
+    square = client.get("/square")
+    square_agent = client.get("/square/agent/wf-1")
+    square_settings = client.get("/square/settings")
+    dashboard_settings = client.get("/dashboard/settings")
+
+    assert square.status_code == 200
+    assert square_agent.status_code == 200
+    assert square_settings.status_code == 404
+    assert dashboard_settings.status_code == 404
+
+
 def test_server_cors_env_overrides_default_origins(monkeypatch):
     from agentclaw.api.server import AgentClawServer
 

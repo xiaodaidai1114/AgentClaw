@@ -11,7 +11,7 @@
         <!-- Todo 卡片 -->
         <TodoCard v-if="todoItems.length" :items="todoItems" />
 
-        <div v-if="hasProcessDetails && processCollapsed" class="process-summary-card" @click="$emit('toggle-process-view')">
+        <div v-if="hasProcessDetails && processCollapsed" class="process-summary-card" @click="toggleProcessView">
           <div class="process-summary-marker">
             <span class="process-summary-dot" :class="processSummaryState">
               <svg v-if="processSummaryState === 'completed'" class="summary-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -49,7 +49,7 @@
                 <div class="parallel-steps">
                   <div v-for="(step, si) in group.steps" :key="step.id || si" class="parallel-step">
                     <div class="step-card" :class="{ running: step.status === 'running', failed: step.error || step.status === 'failed' || step.status === 'error' }">
-                      <div class="step-header" @click="step.expanded = !step.expanded">
+                      <div class="step-header" @click="toggleStep(step)">
                         <svg v-if="isStepRunning(step)" class="icon-spin" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
                         <svg v-else-if="isStepFailed(step)" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5" /><path d="M12 16h.01" /><circle cx="12" cy="12" r="9" /></svg>
                         <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5" /></svg>
@@ -57,7 +57,7 @@
                         <svg class="expand-chevron" :class="{ rotated: step.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                       </div>
                   <!-- 节点 IO 面板 -->
-                  <div v-if="step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
+                  <div v-if="processInteractive && step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
                     <div v-if="step.inputs && Object.keys(step.inputs).length" class="io-section">
                       <JsonCodeBlock :label="$t('streamingMessage.input')" :value="step.inputs" />
                     </div>
@@ -71,7 +71,7 @@
                   <!-- 交叉显示 segments -->
                   <template v-for="(seg, si2) in getDisplaySegments(step)" :key="si2">
                     <div v-if="seg.type === 'reasoning'" class="mini-thinking" :class="{ expanded: seg.expanded }">
-                      <div class="mini-thinking-header" @click="seg.expanded = !seg.expanded">
+                      <div class="mini-thinking-header" @click="toggleSegment(seg)">
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1m-1.636 5.636l-.707-.707M12 21v-1m-5.636-1.636l.707-.707M3 12h1m1.636-5.636l.707.707M12 5a7 7 0 100 14 7 7 0 000-14z"/></svg>
                         <span>{{ $t('streamingMessage.thinking') }}</span>
                         <svg class="expand-chevron" :class="{ rotated: seg.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -136,7 +136,7 @@
                 </div>
                 <div class="timeline-card">
                 <div class="step-card" :class="{ running: step.status === 'running', failed: step.error || step.status === 'failed' || step.status === 'error' }">
-                  <div class="step-header" @click="step.expanded = !step.expanded">
+                  <div class="step-header" @click="toggleStep(step)">
                     <svg v-if="isStepRunning(step)" class="icon-spin" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
                     <svg v-else-if="isStepFailed(step)" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5" /><path d="M12 16h.01" /><circle cx="12" cy="12" r="9" /></svg>
                     <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5" /></svg>
@@ -144,7 +144,7 @@
                     <svg class="expand-chevron" :class="{ rotated: step.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                   </div>
                 <!-- 节点 IO 面板 -->
-                <div v-if="step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
+                <div v-if="processInteractive && step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
                   <div v-if="step.inputs && Object.keys(step.inputs).length" class="io-section">
                     <JsonCodeBlock :label="$t('streamingMessage.input')" :value="step.inputs" />
                   </div>
@@ -158,7 +158,7 @@
                 <!-- 交叉显示 segments -->
                 <template v-for="(seg, si2) in getDisplaySegments(step)" :key="si2">
                   <div v-if="seg.type === 'reasoning'" class="mini-thinking" :class="{ expanded: seg.expanded }">
-                    <div class="mini-thinking-header" @click="seg.expanded = !seg.expanded">
+                    <div class="mini-thinking-header" @click="toggleSegment(seg)">
                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1m-1.636 5.636l-.707-.707M12 21v-1m-5.636-1.636l.707-.707M3 12h1m1.636-5.636l.707.707M12 5a7 7 0 100 14 7 7 0 000-14z"/></svg>
                       <span>{{ $t('streamingMessage.thinking') }}</span>
                       <svg class="expand-chevron" :class="{ rotated: seg.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -235,6 +235,7 @@ export default {
     nodeSteps: { type: Array, default: () => [] },
     todoItems: { type: Array, default: () => [] },
     processCollapsed: { type: Boolean, default: false },
+    processInteractive: { type: Boolean, default: true },
   },
   emits: ['toggle-process-view'],
   data() {
@@ -313,6 +314,18 @@ export default {
     isStepCompleted(step) {
       return !!step && !this.isStepRunning(step) && !this.isStepFailed(step)
     },
+    toggleProcessView() {
+      if (this.processInteractive === false) return
+      this.$emit('toggle-process-view')
+    },
+    toggleStep(step) {
+      if (this.processInteractive === false || !step) return
+      step.expanded = !step.expanded
+    },
+    toggleSegment(seg) {
+      if (this.processInteractive === false || !seg) return
+      seg.expanded = !seg.expanded
+    },
     stepTimelineClass(step) {
       return {
         running: this.isStepRunning(step),
@@ -321,9 +334,11 @@ export default {
       }
     },
     onToolClick(tool) {
+      if (this.processInteractive === false) return
       this.selectedTool = this.selectedTool === tool ? null : tool
     },
     onToolGroupClick(item) {
+      if (this.processInteractive === false) return
       const target = item.count > 1
         ? { id: item.key, name: item.name, tools: item.tools, isGroup: true }
         : item.tool
@@ -400,6 +415,7 @@ export default {
       return groups
     },
     getDisplaySegments(step) {
+      if (this.processInteractive === false) return []
       if (!step.segments || !step.segments.length) {
         return step.toolCalls && step.toolCalls.length ? [{ type: 'tool-group', tools: step.toolCalls }] : []
       }

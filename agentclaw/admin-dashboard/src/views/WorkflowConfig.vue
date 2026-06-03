@@ -45,8 +45,13 @@
         <div class="form-row">
           <div class="form-field">
             <label class="field-label">{{ t('workflowConfig.workflow.publicShare') }}</label>
-            <n-switch v-model:value="workflowForm.public_share_enabled" :disabled="isBuiltinWorkflow" @update:value="workflowChanged = true" />
+            <n-switch v-model:value="workflowForm.public_share_enabled" :disabled="isBuiltinWorkflow" @update:value="onPublicShareChanged" />
             <span class="field-hint">{{ isBuiltinWorkflow ? t('workflowConfig.workflow.builtinPublicShareDisabled') : t('workflowConfig.workflow.publicShareHint') }}</span>
+          </div>
+          <div class="form-field">
+            <label class="field-label">{{ t('workflowConfig.workflow.publishToSquare') }}</label>
+            <n-switch v-model:value="workflowForm.publish_to_square" :disabled="isBuiltinWorkflow || !workflowForm.public_share_enabled" @update:value="workflowChanged = true" />
+            <span class="field-hint">{{ t('workflowConfig.workflow.publishToSquareHint') }}</span>
           </div>
           <div class="form-field">
             <label class="field-label">{{ t('workflowConfig.workflow.injectAsAgenticCapability') }}</label>
@@ -406,6 +411,7 @@ async function fetchWorkflowConfig() {
     rate_limit: cfg.rate_limit || '',
     public_share_enabled: isBuiltinWorkflow.value ? false : !!cfg.public_share_enabled,
     public_share_token: isBuiltinWorkflow.value ? '' : (cfg.public_share_token || ''),
+    publish_to_square: isBuiltinWorkflow.value ? false : !!cfg.publish_to_square,
     workflow_api_key: cfg.workflow_api_key || '',
     workflow_api_key_set: !!cfg.workflow_api_key_set,
     inject_as_agentic_capability: cfg.inject_as_agentic_capability !== false,
@@ -451,6 +457,9 @@ async function saveWorkflowConfig() {
   if (isBuiltinWorkflow.value) {
     workflowForm.value.public_share_enabled = false
     workflowForm.value.public_share_token = ''
+    workflowForm.value.publish_to_square = false
+  } else if (!workflowForm.value.public_share_enabled) {
+    workflowForm.value.publish_to_square = false
   }
   const res = localizeBuiltinWorkflowConfig(await settingsApi.updateWorkflow(workflowId.value, workflowForm.value), workflowId.value, t)
   workflowForm.value = {
@@ -459,6 +468,7 @@ async function saveWorkflowConfig() {
     rate_limit: res.rate_limit || '',
     public_share_enabled: isBuiltinWorkflow.value ? false : !!res.public_share_enabled,
     public_share_token: isBuiltinWorkflow.value ? '' : (res.public_share_token || ''),
+    publish_to_square: isBuiltinWorkflow.value ? false : !!res.publish_to_square,
     workflow_api_key: res.workflow_api_key || '',
     workflow_api_key_set: !!res.workflow_api_key_set,
     inject_as_agentic_capability: res.inject_as_agentic_capability !== false,
@@ -471,6 +481,11 @@ async function saveWorkflowConfig() {
   }
   workflowChanged.value = false
   message.success(t('workflowConfig.messages.workflowSaved'))
+}
+
+function onPublicShareChanged(value) {
+  if (!value) workflowForm.value.publish_to_square = false
+  workflowChanged.value = true
 }
 
 async function saveNodeConfig() {

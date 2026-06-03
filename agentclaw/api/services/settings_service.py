@@ -27,6 +27,7 @@ WORKFLOW_FIELDS = (
     "chat_audio",
     "public_share_enabled",
     "public_share_token",
+    "publish_to_square",
     "workflow_api_key",
     "public_conversation_limit",
     "public_message_limit",
@@ -63,6 +64,7 @@ BUILTIN_CHAT_AUDIO_CONFIG = {
 FALSEABLE_OVERRIDE_FIELDS = {
     "inject_as_agentic_capability",
     "public_share_enabled",
+    "publish_to_square",
     "enabled",
     "speech_input_enabled",
     "tts_enabled",
@@ -744,6 +746,7 @@ def _workflow_base(workflow: Any) -> dict[str, Any]:
     base["rate_limit"] = base["rate_limit"] or ""
     base["public_share_enabled"] = bool(base.get("public_share_enabled"))
     base["public_share_token"] = base.get("public_share_token") or ""
+    base["publish_to_square"] = bool(base.get("publish_to_square")) and base["public_share_enabled"] and bool(base["public_share_token"])
     base["workflow_api_key"] = base.get("workflow_api_key") or ""
     base["public_conversation_limit"] = base.get("public_conversation_limit") or 20
     base["public_message_limit"] = base.get("public_message_limit") or 200
@@ -780,6 +783,7 @@ def _is_builtin_workflow(workflow: Any, workflow_id: str = "") -> bool:
 def _clear_public_share_fields(payload: dict[str, Any]) -> None:
     payload["public_share_enabled"] = False
     payload["public_share_token"] = ""
+    payload["publish_to_square"] = False
 
 
 def _node_base(node: Any) -> dict[str, Any]:
@@ -1092,6 +1096,8 @@ class SettingsService:
             _clear_public_share_fields(data)
         if data.get("public_share_enabled") and not str(data.get("public_share_token") or "").strip():
             data["public_share_token"] = str(getattr(workflow, "public_share_token", "") or "").strip() or secrets.token_urlsafe(24)
+        if not data.get("public_share_enabled") or not str(data.get("public_share_token") or "").strip():
+            data["publish_to_square"] = False
         for numeric_field, fallback in (
             ("public_conversation_limit", 20),
             ("public_message_limit", 200),

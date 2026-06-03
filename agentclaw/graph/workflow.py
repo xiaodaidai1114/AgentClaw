@@ -141,6 +141,7 @@ class Workflow:
         rate_limit: Optional[str] = None,
         public_share_enabled: bool = False,
         public_share_token: Optional[str] = None,
+        publish_to_square: bool = False,
         workflow_api_key: Optional[str] = None,
         public_conversation_limit: int = 20,
         public_message_limit: int = 200,
@@ -173,6 +174,7 @@ class Workflow:
         self.rate_limit = rate_limit
         self.public_share_enabled = bool(public_share_enabled)
         self.public_share_token = public_share_token
+        self.publish_to_square = bool(publish_to_square)
         self.workflow_api_key = workflow_api_key
         self.public_conversation_limit = public_conversation_limit
         self.public_message_limit = public_message_limit
@@ -3069,6 +3071,7 @@ class Workflow:
             "chat_audio": chat_audio,
             "public_share_enabled": False if is_builtin_workflow else bool(getattr(self, "public_share_enabled", False)),
             "public_share_token": "" if is_builtin_workflow else (getattr(self, "public_share_token", "") or ""),
+            "publish_to_square": False if is_builtin_workflow else bool(getattr(self, "publish_to_square", False)),
             "rate_limit": getattr(self, "rate_limit", "") or "",
             "public_conversation_limit": getattr(self, "public_conversation_limit", 20) or 20,
             "public_message_limit": getattr(self, "public_message_limit", 200) or 200,

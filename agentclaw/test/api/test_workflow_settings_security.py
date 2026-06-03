@@ -189,6 +189,62 @@ def test_enabling_public_share_generates_token_and_preserves_masked_api_key(tmp_
     assert saved_path.exists()
 
 
+def test_square_publish_requires_public_share_and_generates_share_token(tmp_path):
+    workflow = SimpleNamespace(
+        id="wf-1",
+        name="Workflow 1",
+        timeout=300,
+        recursion_limit=50,
+        cancel_on_disconnect=True,
+        auth_required=False,
+        allowed_roles=None,
+        rate_limit=None,
+        tracing=True,
+        description="",
+        welcome="",
+        public_share_enabled=False,
+        public_share_token="",
+        publish_to_square=False,
+        workflow_api_key="",
+        public_conversation_limit=20,
+        public_message_limit=200,
+        inject_as_agentic_capability=True,
+        _candidate_base_dirs=lambda: [tmp_path],
+    )
+
+    class Registry:
+        @classmethod
+        def get(cls, workflow_id):
+            return workflow if workflow_id == "wf-1" else None
+
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    service = SettingsService(registry=Registry)
+
+    enabled = service.update_workflow(
+        "wf-1",
+        {
+            "public_share_enabled": True,
+            "public_share_token": "",
+            "publish_to_square": True,
+        },
+    )
+
+    assert enabled["public_share_enabled"] is True
+    assert enabled["publish_to_square"] is True
+    assert len(enabled["public_share_token"]) >= 24
+
+    disabled = service.update_workflow(
+        "wf-1",
+        {
+            "public_share_enabled": False,
+            "publish_to_square": True,
+        },
+    )
+
+    assert disabled["public_share_enabled"] is False
+    assert disabled["publish_to_square"] is False
+
+
 def test_builtin_workflow_cannot_be_published_from_settings_api(tmp_path):
     workflow = SimpleNamespace(
         id="__builtin__",
@@ -224,12 +280,14 @@ def test_builtin_workflow_cannot_be_published_from_settings_api(tmp_path):
         {
             "public_share_enabled": True,
             "public_share_token": "should-not-stick",
+            "publish_to_square": True,
             "rate_limit": "1/min",
         },
     )
 
     assert updated["public_share_enabled"] is False
     assert updated["public_share_token"] == ""
+    assert updated["publish_to_square"] is False
     assert workflow.public_share_enabled is False
     assert workflow.public_share_token == ""
 

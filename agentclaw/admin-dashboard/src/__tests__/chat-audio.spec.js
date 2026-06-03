@@ -22,7 +22,21 @@ describe('admin chat audio integration', () => {
     expect(apiSource).toContain('publicSessionHeaders')
     expect(apiSource).toContain("`/public/workflows/${encodeURIComponent(workflowId)}/speech-to-text`")
     expect(apiSource).toContain("`/public/workflows/${encodeURIComponent(workflowId)}/text-to-speech`")
+    expect(apiSource).toContain("roomSpeechToText")
+    expect(apiSource).toContain("roomTextToSpeech")
+    expect(apiSource).toContain("`/public/rooms/${encodeURIComponent(roomId)}/speech-to-text`")
+    expect(apiSource).toContain("`/public/rooms/${encodeURIComponent(roomId)}/text-to-speech`")
     expect(apiSource).toContain('withCredentials: true')
+  })
+
+  it('parses JSON error payloads returned as blobs from public audio calls', () => {
+    const apiSource = readFileSync(resolve(process.cwd(), 'src/api/index.js'), 'utf8')
+
+    expect(apiSource).toContain('parseBlobJsonError')
+    expect(apiSource).toContain("error.response?.data instanceof Blob")
+    expect(apiSource).toContain("content-type")
+    expect(apiSource).toContain("application/json")
+    expect(apiSource).toContain("JSON.parse(await error.response.data.text())")
   })
 
   it('adds a speech input button to ChatInput', () => {
@@ -69,6 +83,13 @@ describe('admin chat audio integration', () => {
     expect(chatSource).toContain('publicAudioApi.textToSpeech')
     expect(chatSource).toContain('URL.createObjectURL')
     expect(chatSource).toContain('ttsPlaybackUrl')
+  })
+
+  it('uses room-scoped public audio endpoints in public room mode', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain('if (this.isPublicRoomMode) return publicAudioApi.roomSpeechToText(this.publicRoomId, file)')
+    expect(source).toContain('if (this.isPublicRoomMode) return publicAudioApi.roomTextToSpeech(this.publicRoomId, { text })')
   })
 
   it('allows public chat audio controls when workflow metadata enables them', () => {

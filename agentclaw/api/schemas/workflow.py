@@ -63,6 +63,7 @@ class WorkflowInfo(BaseModel):
     recommended_input: Optional[str] = None
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
+    publish_to_square: bool = False
     rate_limit: Optional[str] = None
     public_conversation_limit: int = 20
     public_message_limit: int = 200
@@ -96,6 +97,7 @@ class WorkflowStructure(BaseModel):
     recommended_input: Optional[str] = None
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
+    publish_to_square: bool = False
     rate_limit: Optional[str] = None
     public_conversation_limit: int = 20
     public_message_limit: int = 200

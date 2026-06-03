@@ -28,6 +28,14 @@ from agentclaw.api.services.conversation_service import (
     ConversationService,
     get_conversation_service,
 )
+from agentclaw.api.services.public_room_service import (
+    PublicRoomService,
+    get_public_room_service,
+)
+from agentclaw.api.services.public_room_chat_service import (
+    PublicRoomChatService,
+    get_public_room_chat_service,
+)
 
 __all__ = [
     "WorkflowService",
@@ -42,4 +50,8 @@ __all__ = [
     "get_dashboard_service",
     "ConversationService",
     "get_conversation_service",
+    "PublicRoomService",
+    "get_public_room_service",
+    "PublicRoomChatService",
+    "get_public_room_chat_service",
 ]

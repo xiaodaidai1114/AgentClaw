@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-const routes = [
+const dashboardRoutes = [
   {
     path: '/',
     redirect: '/builtin',
@@ -123,9 +123,27 @@ const routes = [
   },
 ]
 
+const squareRoutes = [
+  {
+    path: '/',
+    name: 'PublicSquare',
+    component: () => import('../views/PublicSquare.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/agent/:id',
+    name: 'PublicAgent',
+    component: () => import('../views/PublicAgent.vue'),
+    meta: { public: true },
+  },
+]
+
+const isSquareBase = window.location.pathname === '/square' || window.location.pathname.startsWith('/square/')
+const routes = isSquareBase ? squareRoutes : dashboardRoutes
+
 const router = createRouter({
-  // 使用 /dashboard 作为路由基础路径（与 vite.config.js 的 base 配合）
-  history: createWebHistory('/dashboard'),
+  // 使用服务端入口作为路由基础路径（与 vite.config.js 的 base 配合）
+  history: createWebHistory(isSquareBase ? '/square' : '/dashboard'),
   routes,
 })
 

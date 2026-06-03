@@ -338,9 +338,7 @@ def create_public_session(workflow_id: str) -> Tuple[str, int]:
     return f"{encoded_payload}.{signature}", expires_at
 
 
-def verify_public_session(request: Request, workflow_id: str) -> bool:
-    if request.headers.get(PUBLIC_SESSION_HEADER) != "1":
-        return False
+def verify_public_session_cookie(request: Request, workflow_id: str) -> bool:
     token = request.cookies.get(PUBLIC_SESSION_COOKIE)
     if not token:
         return False
@@ -361,6 +359,12 @@ def verify_public_session(request: Request, workflow_id: str) -> bool:
     if session.get("workflow_id") != workflow_id:
         return False
     return float(session.get("expires_at", 0)) > _time.time()
+
+
+def verify_public_session(request: Request, workflow_id: str) -> bool:
+    if request.headers.get(PUBLIC_SESSION_HEADER) != "1":
+        return False
+    return verify_public_session_cookie(request, workflow_id)
 
 
 def verify_public_page_session(request: Request, workflow_id: str) -> bool:

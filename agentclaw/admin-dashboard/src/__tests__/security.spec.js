@@ -54,6 +54,9 @@ describe('dashboard security posture', () => {
 
     expect(pageSource).toContain(':share-token="shareToken"')
     expect(pageSource).toContain("route.query.share_token || route.query.token")
+    expect(pageSource).toContain('shareTokenStorageKey')
+    expect(pageSource).toContain('sessionStorage.setItem(shareTokenStorageKey')
+    expect(pageSource).toContain('sessionStorage.getItem(shareTokenStorageKey')
     expect(pageSource).toContain('router.replace')
     expect(pageSource).toContain('shareTokenRef')
     expect(pageSource).toContain('delete query.share_token')

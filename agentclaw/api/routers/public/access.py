@@ -253,8 +253,14 @@ def _session_identity(request: Request) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16] if token else "anon"
 
 
-def check_public_rate_limit(workflow: Any, workflow_id: str, request: Request, action: str) -> JSONResponse | None:
-    raw_limit = getattr(workflow, "rate_limit", None) or default_public_rate_limit()
+def check_public_rate_limit(
+    workflow: Any,
+    workflow_id: str,
+    request: Request,
+    action: str,
+    limit: Any = None,
+) -> JSONResponse | None:
+    raw_limit = getattr(workflow, "rate_limit", None) or limit or default_public_rate_limit()
     parsed = parse_public_rate_limit(raw_limit)
     if not parsed:
         return None

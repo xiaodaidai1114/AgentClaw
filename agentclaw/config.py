@@ -267,6 +267,10 @@ class ProjectConfig:
 
         candidates = []
 
+        env_project_dir = os.getenv("AGENTCLAW_PROJECT_DIR", "").strip()
+        if env_project_dir:
+            candidates.append(Path(env_project_dir).expanduser().resolve())
+
         # 入口脚本目录
         if sys.argv and sys.argv[0]:
             script_path = Path(sys.argv[0]).expanduser()

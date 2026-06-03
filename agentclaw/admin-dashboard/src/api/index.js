@@ -249,13 +249,33 @@ const publicShareHeaders = (shareToken = '', extraHeaders = {}) => {
   return headers
 }
 
+const publicRoomHeaders = (roomToken = '', extraHeaders = {}) => {
+  const headers = { ...publicSessionHeaders, ...extraHeaders }
+  if (roomToken) headers['X-AgentClaw-Room-Token'] = roomToken
+  return headers
+}
+
 const publicConversationPayload = (workflowId, title, source) => {
   return { workflow_id: workflowId, title, source }
 }
 
+async function parseBlobJsonError(error) {
+  if (!(error.response?.data instanceof Blob)) return error
+  const headers = error.response.headers
+  const contentType = String(headers?.get?.('content-type') || headers?.['content-type'] || '')
+  if (!contentType.includes('application/json')) return error
+  try {
+    error.response.data = JSON.parse(await error.response.data.text())
+  } catch (_) {
+    // Keep the original Blob if the server returned malformed JSON.
+  }
+  return error
+}
+
 publicApi.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
+    error = await parseBlobJsonError(error)
     console.error('Public API Error:', error.response?.data || error.message)
     return Promise.reject(error)
   }
@@ -392,6 +412,31 @@ export const publicWorkflowsApi = {
   openSession: (workflowId, shareToken = '') => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/session`, null, { headers: publicShareHeaders(shareToken), withCredentials: true }),
 }
 
+export const publicSquareApi = {
+  list: () => publicApi.get('/public/square/workflows', { withCredentials: true }),
+}
+
+export const publicRoomsApi = {
+  create: (workflowId, shareToken = '', data = {}) => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/rooms`, data, { headers: publicShareHeaders(shareToken), withCredentials: true }),
+  openSession: (roomId, roomToken = '') => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/session`, null, { headers: publicRoomHeaders(roomToken), withCredentials: true }),
+  bootstrap: (roomId, roomToken = '') => publicApi.get(`/public/rooms/${encodeURIComponent(roomId)}/bootstrap`, { headers: publicRoomHeaders(roomToken), withCredentials: true }),
+  join: (roomId, roomToken = '', data = {}) => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/join`, data, { headers: publicRoomHeaders(roomToken), withCredentials: true }),
+  eventsUrl: (roomId, baseUrl = '') => `${baseUrl}/api/public/rooms/${encodeURIComponent(roomId)}/events`,
+  state: (roomId, sinceVersion = null) => publicApi.get(`/public/rooms/${encodeURIComponent(roomId)}/state`, {
+    params: sinceVersion === null || sinceVersion === undefined ? {} : { since_version: sinceVersion },
+    headers: publicRoomHeaders(),
+    withCredentials: true,
+  }),
+  typing: (roomId, typing = true) => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/typing`, { typing }, { headers: publicRoomHeaders(), withCredentials: true }),
+  listChat: (roomId, afterId = '', limit = 100) => publicApi.get(`/public/rooms/${encodeURIComponent(roomId)}/chat`, {
+    params: { ...(afterId ? { after_id: afterId } : {}), limit },
+    headers: publicRoomHeaders(),
+    withCredentials: true,
+  }),
+  sendChat: (roomId, content = '') => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/chat`, { content }, { headers: publicRoomHeaders(), withCredentials: true }),
+  run: (roomId, data = {}) => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/run`, data, { headers: publicRoomHeaders(), withCredentials: true, timeout: 0 }),
+}
+
 export const publicAudioApi = {
   speechToText: (workflowId, shareToken = '', file) => {
     const form = new FormData()
@@ -403,6 +448,19 @@ export const publicAudioApi = {
   },
   textToSpeech: (workflowId, shareToken = '', data = {}) => publicApi.post(`/public/workflows/${encodeURIComponent(workflowId)}/text-to-speech`, data, {
     headers: publicShareHeaders(shareToken),
+    responseType: 'blob',
+    withCredentials: true,
+  }),
+  roomSpeechToText: (roomId, file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/speech-to-text`, form, {
+      headers: publicRoomHeaders('', { 'Content-Type': 'multipart/form-data' }),
+      withCredentials: true,
+    })
+  },
+  roomTextToSpeech: (roomId, data = {}) => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/text-to-speech`, data, {
+    headers: publicRoomHeaders(),
     responseType: 'blob',
     withCredentials: true,
   }),

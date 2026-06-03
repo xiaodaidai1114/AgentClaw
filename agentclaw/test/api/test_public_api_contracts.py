@@ -76,6 +76,13 @@ def test_anonymous_public_workflow_detail_returns_runtime_metadata(public_api_cl
                 }
             },
             "user_input_field": "question",
+            "chat_audio": {
+                "enabled": False,
+                "speech_input_enabled": False,
+                "tts_enabled": False,
+                "max_audio_bytes": 10485760,
+                "max_tts_chars": 2000,
+            },
         }
     }
 
@@ -101,6 +108,77 @@ def test_anonymous_public_workflow_detail_rejects_builtin_workflow(public_api_cl
 
     assert response.status_code == 404
     assert response.json()["code"] == "WORKFLOW_NOT_FOUND"
+
+
+def test_public_square_lists_only_published_public_workflows(public_api_client, monkeypatch):
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class PublishedWorkflow:
+        id = "wf-published"
+        name = "Published workflow"
+        description = "Visible in the public square"
+        recommended_input = "Start here"
+        public_share_enabled = True
+        public_share_token = "share-published"
+        publish_to_square = True
+        chat_audio = {
+            "enabled": True,
+            "speech_input_enabled": True,
+            "tts_enabled": False,
+        }
+
+    class PrivateShareWorkflow:
+        id = "wf-private-share"
+        name = "Private share workflow"
+        description = "Has a token but is not in the square"
+        public_share_enabled = True
+        public_share_token = "share-private"
+        publish_to_square = False
+
+    class DisabledWorkflow:
+        id = "wf-disabled"
+        name = "Disabled workflow"
+        public_share_enabled = False
+        public_share_token = "share-disabled"
+        publish_to_square = True
+
+    class BuiltinWorkflow:
+        id = "__builtin__"
+        name = "Builtin"
+        is_builtin = True
+        public_share_enabled = True
+        public_share_token = "share-builtin"
+        publish_to_square = True
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "list_all",
+        classmethod(lambda cls: [PublishedWorkflow(), PrivateShareWorkflow(), DisabledWorkflow(), BuiltinWorkflow()]),
+    )
+
+    response = public_api_client.get("/api/public/square/workflows")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workflows": [
+            {
+                "id": "wf-published",
+                "name": "Published workflow",
+                "description": "Visible in the public square",
+                "recommended_input": "Start here",
+                "share_token": "share-published",
+                "chat_audio": {
+                    "enabled": True,
+                    "speech_input_enabled": True,
+                    "tts_enabled": False,
+                },
+            }
+        ]
+    }
+    assert "wf-private-share" not in response.text
+    assert "share-private" not in response.text
+    assert "share-disabled" not in response.text
+    assert "share-builtin" not in response.text
 
 
 def test_workflow_run_requires_auth(public_api_client):

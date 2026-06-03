@@ -3,12 +3,13 @@
     <!-- 用户消息 -->
     <div v-if="msg.role === 'user'" class="message user">
       <div class="user-avatar-stack">
-        <div class="message-avatar">U</div>
+        <div class="message-avatar">{{ userAvatarLabel }}</div>
         <span class="user-timestamp mono-font">{{ formatTime(msg.timestamp) }}</span>
       </div>
       <div class="message-content">
         <div class="user-bubble-row">
           <div class="user-bubble-stack">
+            <div v-if="userDisplayName" class="user-display-name">{{ userDisplayName }}</div>
             <!-- 编辑模式 -->
             <div v-if="isEditing" class="edit-area">
               <textarea ref="editInput" v-model="editText" class="edit-textarea" @input="autoResizeTextarea" @keydown.ctrl.enter="confirmEdit" @keydown.esc="cancelEdit"></textarea>
@@ -21,7 +22,7 @@
             <template v-else>
               <div class="message-bubble">{{ msg.content }}</div>
               <div class="user-actions-inline">
-                <button v-if="!msg.isInterruptResponse" class="action-btn" :title="$t('chatMessage.editRetry')" @click="startEdit">
+                <button v-if="!msg.isInterruptResponse && !isPublicRoomParticipantMessage" class="action-btn" :title="$t('chatMessage.editRetry')" @click="startEdit">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 </button>
                 <button class="action-btn" :class="{ copied: msg.copied }" :title="$t('common.copy')" @click="$emit('copy')">
@@ -65,7 +66,7 @@
           <span class="mono-font">{{ formatTime(msg.timestamp) }}</span>
         </div>
 
-        <div v-if="hasProcessDetails && processCollapsed" class="process-summary-card" @click="$emit('toggle-process-view')">
+        <div v-if="hasProcessDetails && processCollapsed" class="process-summary-card" @click="toggleProcessView">
           <div class="process-summary-marker">
             <span class="process-summary-dot" :class="processSummaryState">
               <svg v-if="processSummaryState === 'completed'" class="summary-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -103,7 +104,7 @@
                 <div class="parallel-steps">
                   <div v-for="(step, si) in group.steps" :key="step.id || si" class="parallel-step">
                     <div class="mini-thinking timeline-node-card" :class="{ expanded: step.expanded, running: step.status === 'running', failed: step.error || step.status === 'failed' || step.status === 'error' }">
-                    <div class="mini-thinking-header" @click="step.expanded = !step.expanded">
+                    <div class="mini-thinking-header" @click="toggleStep(step)">
                       <svg v-if="isStepRunning(step)" class="icon-spin" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
                       </svg>
@@ -118,7 +119,7 @@
                       <span>{{ step.name }}{{ step.elapsed ? ` (${step.elapsed})` : '' }}</span>
                       <svg class="expand-chevron" :class="{ rotated: step.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                     </div>
-                    <div v-if="step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
+                    <div v-if="processInteractive && step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
                       <div v-if="step.inputs && Object.keys(step.inputs).length" class="io-section">
                         <JsonCodeBlock :label="$t('chatMessage.input')" :value="step.inputs" />
                       </div>
@@ -133,7 +134,7 @@
                   <!-- 交叉显示 segments -->
                   <template v-for="(seg, si2) in getDisplaySegments(step)" :key="si2">
                     <div v-if="seg.type === 'reasoning'" class="mini-thinking" :class="{ expanded: seg.expanded }">
-                      <div class="mini-thinking-header" @click="seg.expanded = !seg.expanded">
+                      <div class="mini-thinking-header" @click="toggleSegment(seg)">
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1m-1.636 5.636l-.707-.707M12 21v-1m-5.636-1.636l.707-.707M3 12h1m1.636-5.636l.707.707M12 5a7 7 0 100 14 7 7 0 000-14z"/></svg>
                         <span>{{ $t('chatMessage.thinking') }}</span>
                         <svg class="expand-chevron" :class="{ rotated: seg.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -197,7 +198,7 @@
                 </div>
                 <div class="timeline-card">
                 <div class="mini-thinking timeline-node-card" :class="{ expanded: step.expanded, running: step.status === 'running', failed: step.error || step.status === 'failed' || step.status === 'error' }">
-                  <div class="mini-thinking-header" @click="step.expanded = !step.expanded">
+                  <div class="mini-thinking-header" @click="toggleStep(step)">
                     <svg v-if="isStepRunning(step)" class="icon-spin" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
                     </svg>
@@ -212,7 +213,7 @@
                     <span>{{ step.name }}{{ step.elapsed ? ` (${step.elapsed})` : '' }}</span>
                     <svg class="expand-chevron" :class="{ rotated: step.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                   </div>
-                  <div v-if="step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
+                  <div v-if="processInteractive && step.expanded && (step.inputs || step.outputs || step.error)" class="node-io-panel mono-font">
                     <div v-if="step.inputs && Object.keys(step.inputs).length" class="io-section">
                       <JsonCodeBlock :label="$t('chatMessage.input')" :value="step.inputs" />
                     </div>
@@ -227,7 +228,7 @@
                 <!-- 交叉显示 segments -->
                 <template v-for="(seg, si2) in getDisplaySegments(step)" :key="si2">
                   <div v-if="seg.type === 'reasoning'" class="mini-thinking" :class="{ expanded: seg.expanded }">
-                    <div class="mini-thinking-header" @click="seg.expanded = !seg.expanded">
+                    <div class="mini-thinking-header" @click="toggleSegment(seg)">
                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1m-1.636 5.636l-.707-.707M12 21v-1m-5.636-1.636l.707-.707M3 12h1m1.636-5.636l.707.707M12 5a7 7 0 100 14 7 7 0 000-14z"/></svg>
                       <span>{{ $t('chatMessage.thinking') }}</span>
                       <svg class="expand-chevron" :class="{ rotated: seg.expanded }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -273,7 +274,7 @@
         </div>
 
         <!-- 直接工具调用 (无 nodeSteps 时) -->
-        <div v-else-if="hasToolCalls && !processCollapsed" class="agent-step">
+        <div v-else-if="processInteractive && hasToolCalls && !processCollapsed" class="agent-step">
           <div class="tool-group">
             <div
               v-for="(item, ti) in getToolGroupItems(msg.toolCalls)"
@@ -297,13 +298,13 @@
 
         <!-- 思考过程 (仅向后兼容：老消息没有 segments 时显示) -->
         <div v-if="msg.reasoning && !hasSegments && !processCollapsed" class="mini-thinking legacy-reasoning-card" :class="{ expanded: msg.reasoningExpanded }">
-          <div class="mini-thinking-header" @click="$emit('toggle-reasoning')">
+          <div class="mini-thinking-header" @click="toggleReasoning">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1m-1.636 5.636l-.707-.707M12 21v-1m-5.636-1.636l.707-.707M3 12h1m1.636-5.636l.707.707M12 5a7 7 0 100 14 7 7 0 000-14z"/>
             </svg>
             <span>{{ $t('chatMessage.reasoningProcess') }}</span>
           </div>
-          <div class="mini-thinking-body mono-font">{{ msg.reasoning }}</div>
+          <div v-if="processInteractive" class="mini-thinking-body mono-font">{{ msg.reasoning }}</div>
         </div>
 
         <!-- 消息正文 -->
@@ -384,6 +385,7 @@ export default {
   props: {
     msg: { type: Object, required: true },
     processCollapsed: { type: Boolean, default: false },
+    processInteractive: { type: Boolean, default: true },
     ttsAvailable: { type: Boolean, default: false },
     ttsState: { type: String, default: '' },
   },
@@ -394,6 +396,16 @@ export default {
   computed: {
     hasSteps() {
       return this.msg.nodeSteps && this.msg.nodeSteps.length > 0
+    },
+    userDisplayName() {
+      const nickname = String(this.msg?.sender?.nickname || '').trim()
+      return nickname || ''
+    },
+    userAvatarLabel() {
+      return this.userDisplayName ? this.userDisplayName.slice(0, 2).toUpperCase() : 'U'
+    },
+    isPublicRoomParticipantMessage() {
+      return this.msg?.sender_type === 'public_room_participant'
     },
     hasToolCalls() {
       return this.msg.toolCalls && this.msg.toolCalls.length > 0 && !this.hasSteps
@@ -482,6 +494,22 @@ export default {
     isStepCompleted(step) {
       return !!step && !this.isStepRunning(step) && !this.isStepFailed(step)
     },
+    toggleProcessView() {
+      if (this.processInteractive === false) return
+      this.$emit('toggle-process-view')
+    },
+    toggleStep(step) {
+      if (this.processInteractive === false || !step) return
+      step.expanded = !step.expanded
+    },
+    toggleSegment(seg) {
+      if (this.processInteractive === false || !seg) return
+      seg.expanded = !seg.expanded
+    },
+    toggleReasoning() {
+      if (this.processInteractive === false) return
+      this.$emit('toggle-reasoning')
+    },
     stepTimelineClass(step) {
       return {
         running: this.isStepRunning(step),
@@ -550,9 +578,11 @@ export default {
       this.editText = ''
     },
     onToolClick(tool) {
+      if (this.processInteractive === false) return
       this.selectedTool = this.selectedTool === tool ? null : tool
     },
     onToolGroupClick(item) {
+      if (this.processInteractive === false) return
       const target = item.count > 1
         ? { id: item.key, name: item.name, tools: item.tools, isGroup: true }
         : item.tool
@@ -600,6 +630,7 @@ export default {
       return groups
     },
     getDisplaySegments(step) {
+      if (this.processInteractive === false) return []
       if (!step.segments || !step.segments.length) {
         return step.toolCalls && step.toolCalls.length ? [{ type: 'tool-group', tools: step.toolCalls }] : []
       }
@@ -681,6 +712,15 @@ export default {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+}
+.user-display-name {
+  max-width: 100%;
+  color: var(--text-muted, #a1a1aa);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-actions-inline {

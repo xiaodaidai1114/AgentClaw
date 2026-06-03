@@ -1426,6 +1426,7 @@ async function onWorkflowSelect(workflowId) {
         rate_limit: workflow.rate_limit || '',
         public_share_enabled: !!workflow.public_share_enabled,
         public_share_token: workflow.public_share_token || '',
+        publish_to_square: !!workflow.publish_to_square,
         workflow_api_key: '',
         workflow_api_key_set: !!workflow.workflow_api_key_set,
         public_conversation_limit: workflow.public_conversation_limit || 20,

@@ -53,8 +53,22 @@ const isPublicRoute = computed(() => {
 const naiveLocale = computed(() => locale.value === 'en-US' ? enUS : zhCN)
 const naiveDateLocale = computed(() => locale.value === 'en-US' ? dateEnUS : dateZhCN)
 const chatRouteNames = new Set(['AgentChat', 'BuiltinAgent', 'PublicAgent'])
+
+function publicAgentRouteViewKey(route) {
+  const query = { ...route.query }
+  delete query.share_token
+  delete query.token
+  delete query.room_token
+  const queryKey = Object.keys(query)
+    .sort()
+    .map((key) => `${key}:${JSON.stringify(query[key])}`)
+    .join('|')
+  return `${route.path}?${queryKey}`
+}
+
 const routeViewKey = computed(() => {
   const routeName = String(route.name || '')
+  if (routeName === 'PublicAgent') return publicAgentRouteViewKey(route)
   if (chatRouteNames.has(routeName)) return route.fullPath
   return routeName || route.path
 })

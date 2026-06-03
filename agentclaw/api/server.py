@@ -753,6 +753,7 @@ class AgentClawServer:
         )
         from agentclaw.api.routers.public.audio import (
             _public_max_audio_bytes,
+            public_room_speech_to_text_path_prefix,
             public_speech_to_text_path_prefix,
         )
         from agentclaw.api.security_headers import SecurityHeadersMiddleware
@@ -774,7 +775,10 @@ class AgentClawServer:
             max_size=request_body_limit,
             path_prefixes=("/",),
             excluded_path_prefixes=("/api/upload", "/admin/knowledgebases"),
-            path_limits={public_speech_to_text_path_prefix(): _public_max_audio_bytes()},
+            path_limits={
+                public_speech_to_text_path_prefix(): _public_max_audio_bytes(),
+                public_room_speech_to_text_path_prefix(): _public_max_audio_bytes(),
+            },
         )
         app.add_middleware(
             UploadSizeLimitMiddleware,
@@ -1607,6 +1611,29 @@ class AgentClawServer:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Admin Dashboard not found"}
+            )
+
+        # Public Square 入口页面（与 /dashboard 后台入口分离）
+        @app.get("/square")
+        @app.get("/square/{path:path}")
+        async def serve_public_square(path: str = ""):
+            """服务公开智能体广场 SPA。"""
+            normalized = path.strip("/")
+            if normalized and not normalized.startswith("agent/"):
+                return JSONResponse(status_code=404, content={"error": "Not found"})
+            index_file = dist_path / "index.html"
+            if index_file.exists():
+                return FileResponse(
+                    str(index_file),
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0"
+                    }
+                )
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Public Square not found"}
             )
         
         logger.info(f"✅ Admin Dashboard 已挂载: /dashboard")

@@ -1,9 +1,9 @@
 <template>
   <div class="agent-chat" :class="{ 'public-chat': isPublicMode, 'mobile-config-open': mobileConfigOpen }">
-    <ChatSidebar class="desktop-chat-sidebar" :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
+    <ChatSidebar v-if="!isPublicRoomMode" class="desktop-chat-sidebar" :conversations="conversations" :activeId="conversationId" v-model:collapsed="sidebarCollapsed" @new-conversation="newConversation" @select="loadConversation" @delete="deleteConversation" />
     <div class="chat-main">
       <div class="mobile-chat-header">
-        <button class="mobile-header-btn mobile-conversation-toggle" type="button" :title="$t('chatSidebar.recentConversations')" @click="mobileSidebarOpen = true">
+        <button v-if="!isPublicRoomMode" class="mobile-header-btn mobile-conversation-toggle" type="button" :title="$t('chatSidebar.recentConversations')" @click="mobileSidebarOpen = true">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
@@ -35,7 +35,21 @@
               <circle cx="6" cy="12" r="2" />
             </svg>
           </button>
-          <button v-if="!hasFormFields && (!conversationModels.length || isPublicMode)" class="mobile-header-btn mobile-new-chat" type="button" :title="$t('chatSidebar.createConversation')" @click="newConversation">
+          <button v-if="isPublicMode && !isPublicRoomMode" class="mobile-header-btn mobile-public-room" type="button" title="公开多人会话" @click="openCreatePublicRoom">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 00-3-3.87" />
+              <path d="M16 3.13a4 4 0 010 7.75" />
+            </svg>
+          </button>
+          <button v-if="isPublicRoomMode && publicRoomShareLink" class="mobile-header-btn mobile-public-room" type="button" title="复制房间链接" @click="copyPublicRoomLink">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+            </svg>
+          </button>
+          <button v-if="!isPublicRoomMode && !hasFormFields && (!conversationModels.length || isPublicMode)" class="mobile-header-btn mobile-new-chat" type="button" :title="$t('chatSidebar.createConversation')" @click="newConversation">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -85,8 +99,24 @@
           >{{ m.name || m.id }}</div>
         </div>
       </div>
-      <div v-else class="public-header desktop-public-header"><h2>{{ workflowName }}</h2><p v-if="workflowDesc">{{ workflowDesc }}</p></div>
+      <div v-else class="public-header desktop-public-header">
+        <div class="public-header-copy">
+          <h2>{{ workflowName }}</h2>
+          <p v-if="workflowDesc">{{ workflowDesc }}</p>
+        </div>
+        <div class="public-room-actions">
+          <button v-if="!isPublicRoomMode" class="public-room-btn" type="button" @click="openCreatePublicRoom">公开多人会话</button>
+        </div>
+      </div>
       <div class="messages-container" ref="messagesContainer">
+        <div v-if="isPublicRoomMode" class="public-room-bar">
+          <div class="public-room-bar-main">
+            <span class="public-room-dot" :class="{ running: publicRoomBusy }"></span>
+            <span>{{ publicRoomStatusText }}</span>
+          </div>
+          <div v-if="publicRoomTypingText" class="public-room-typing">{{ publicRoomTypingText }}</div>
+          <button v-if="publicRoomShareLink" class="public-room-link-btn" type="button" @click="copyPublicRoomLink">复制链接</button>
+        </div>
         <div v-if="hasFormFields" class="config-panel-wrapper">
           <div class="config-panel">
             <div
@@ -174,15 +204,64 @@
             <span>{{ processCollapsed ? $t('agentChat.expandProcess') : $t('agentChat.collapseProcess') }}</span>
           </button>
         </div>
-        <ChatMessage v-for="(msg, index) in visibleMessages" :key="msg._origIndex != null ? msg._origIndex : index" :msg="msg" :process-collapsed="processCollapsed" :tts-available="ttsAvailable" :tts-state="ttsStateForMessage(msg)" @copy="copyMessage(msg, msg._origIndex != null ? msg._origIndex : index)" @edit="(newText) => editMessage(msg, msg._origIndex != null ? msg._origIndex : index, newText)" @feedback="(type) => feedbackMessage(msg, msg._origIndex != null ? msg._origIndex : index, type)" @toggle-reasoning="toggleReasoning(msg._origIndex != null ? msg._origIndex : index)" @approve="(action) => handleApproval(msg, msg._origIndex != null ? msg._origIndex : index, action)" @toggle-process-view="processCollapsed = !processCollapsed" @speak="speakMessage(msg)" />
-        <StreamingMessage v-if="isStreaming || isCompressingContext" :streamingContent="streamingContent" :reasoningContent="reasoningContent" :thinkingStatus="thinkingStatus" :nodeSteps="nodeSteps" :todoItems="todoItems" :process-collapsed="processCollapsed" @toggle-process-view="processCollapsed = !processCollapsed" />
+        <ChatMessage v-for="(msg, index) in visibleMessages" :key="msg._origIndex != null ? msg._origIndex : index" :msg="msg" :process-collapsed="isPublicMode ? false : processCollapsed" :process-interactive="!isPublicMode" :tts-available="ttsAvailable" :tts-state="ttsStateForMessage(msg)" @copy="copyMessage(msg, msg._origIndex != null ? msg._origIndex : index)" @edit="(newText) => editMessage(msg, msg._origIndex != null ? msg._origIndex : index, newText)" @feedback="(type) => feedbackMessage(msg, msg._origIndex != null ? msg._origIndex : index, type)" @toggle-reasoning="toggleReasoning(msg._origIndex != null ? msg._origIndex : index)" @approve="(action) => handleApproval(msg, msg._origIndex != null ? msg._origIndex : index, action)" @toggle-process-view="processCollapsed = !processCollapsed" @speak="speakMessage(msg)" />
+        <StreamingMessage v-if="showStreamingMessage" :streamingContent="streamingContent" :reasoningContent="isPublicMode ? '' : reasoningContent" :thinkingStatus="thinkingStatus" :nodeSteps="nodeSteps" :todoItems="isPublicMode ? [] : todoItems" :process-collapsed="isPublicMode ? false : processCollapsed" :process-interactive="!isPublicMode" @toggle-process-view="processCollapsed = !processCollapsed" />
       </div>
-      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :speechInputAvailable="speechInputAvailable" :recording="speechRecording" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @speech-input="toggleSpeechInput" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
+      <ChatInput ref="chatInput" v-model="inputText" :placeholder="inputPlaceholder" :enabled="inputEnabled" :isStreaming="isStreaming" :canStopStreaming="!isPublicRoomMode" :contextDisplay="contextDisplay" :contextUsed="totalContextTokens" :contextLimit="effectiveContextLimit" :canCompressContext="canManualCompressContext" :uploadAvailable="uploadAvailable" :speechInputAvailable="speechInputAvailable" :recording="speechRecording" :attachedFiles="attachedFiles" :inputError="inputError" :inputModes="humanInputModes" @send="sendMessage" @action="submitHumanInputAction" @attach="$refs.fileInput && $refs.fileInput.click()" @speech-input="toggleSpeechInput" @clear="clearCurrentConversation" @remove-file="removeFile" @drop-files="handleDropFiles" @compress-context="manualCompressContext" />
       <input ref="fileInput" type="file" multiple style="display:none" @change="handleFileSelect" />
     </div>
-    <div v-if="mobileSidebarOpen" class="mobile-sidebar-overlay" @click.self="mobileSidebarOpen = false">
+    <div v-if="mobileSidebarOpen && !isPublicRoomMode" class="mobile-sidebar-overlay" @click.self="mobileSidebarOpen = false">
       <div class="mobile-sidebar-sheet">
         <ChatSidebar class="mobile-chat-sidebar" :conversations="conversations" :activeId="conversationId" :collapsed="false" @new-conversation="handleMobileNewConversation" @select="handleMobileSelectConversation" @delete="handleMobileDeleteConversation" />
+      </div>
+    </div>
+    <div
+      v-if="isPublicRoomMode && publicRoomJoined"
+      class="public-room-player-chat"
+      :class="{ collapsed: !publicRoomChatOpen }"
+      :style="publicRoomChatPanelStyle"
+    >
+      <button
+        v-if="!publicRoomChatOpen"
+        class="public-room-chat-fab"
+        type="button"
+        title="玩家聊天"
+        @mousedown.prevent="startPublicRoomChatDrag"
+        @touchstart.passive="startPublicRoomChatDrag"
+        @click="openPublicRoomChat"
+      >
+        <span>聊天</span>
+        <span v-if="publicRoomChatUnread" class="public-room-chat-badge">{{ publicRoomChatUnread > 99 ? '99+' : publicRoomChatUnread }}</span>
+      </button>
+      <div v-else class="public-room-chat-panel">
+        <div class="public-room-chat-header" @mousedown="startPublicRoomChatDrag" @touchstart.passive="startPublicRoomChatDrag">
+          <div>
+            <strong>玩家聊天</strong>
+            <span>{{ publicRoomParticipants.length || 1 }} 人</span>
+          </div>
+          <button type="button" title="收起聊天" @click.stop="publicRoomChatOpen = false">×</button>
+        </div>
+        <div ref="publicRoomChatMessages" class="public-room-chat-messages">
+          <div v-if="publicRoomChatMessages.length === 0" class="public-room-chat-empty">暂无玩家聊天</div>
+          <div v-for="message in publicRoomChatMessages" :key="message.id" class="public-room-chat-message">
+            <div class="public-room-chat-meta">
+              <span>{{ message.nickname || '玩家' }}</span>
+              <time>{{ formatPublicRoomChatTime(message.created_at) }}</time>
+            </div>
+            <div class="public-room-chat-content">{{ message.content }}</div>
+          </div>
+        </div>
+        <form class="public-room-chat-form" @submit.prevent="sendPublicRoomChatMessage">
+          <input
+            v-model="publicRoomChatDraft"
+            maxlength="500"
+            autocomplete="off"
+            placeholder="给其他玩家发消息"
+            :disabled="publicRoomChatSending"
+          />
+          <button type="submit" :disabled="publicRoomChatSending || !publicRoomChatDraft.trim()">发送</button>
+        </form>
+        <div v-if="publicRoomChatError" class="public-room-chat-error">{{ publicRoomChatError }}</div>
       </div>
     </div>
     <div v-if="!isPublicMode" class="info-panel" :class="{ collapsed: infoPanelCollapsed }" :style="infoPanelCollapsed ? {} : { width: infoPanelWidth + 'px' }">
@@ -303,6 +382,21 @@
     <ConfirmDialog :visible="compressConfirmDialog.visible" :action="$t('agentChat.compressContextAction')" :description="$t('agentChat.compressContextConfirm')" @confirm="confirmManualCompressContext" @cancel="compressConfirmDialog.visible = false" />
     <ConfirmDialog :visible="clearConversationDialog.visible" :action="$t('agentChat.clearConversationAction')" :description="$t('agentChat.clearConversationConfirm')" @confirm="confirmClearCurrentConversation" @cancel="clearConversationDialog.visible = false" />
     <ConfirmDialog :visible="deleteConversationDialog.visible" :action="$t('agentChat.deleteConversationAction')" :description="$t('agentChat.deleteConversationConfirm')" @confirm="confirmDeleteConversation" @cancel="deleteConversationDialog = { visible: false, conversationId: '' }" />
+    <div v-if="publicRoomDialog.visible" class="public-room-modal-backdrop">
+      <form class="public-room-modal" @submit.prevent="submitPublicRoomDialog">
+        <h3>{{ publicRoomDialog.mode === 'create' ? '创建公开会话' : '加入公开会话' }}</h3>
+        <p>{{ publicRoomDialog.mode === 'create' ? '输入昵称后会生成一个可分享的多人会话链接。' : '输入昵称后即可进入这个公开会话。' }}</p>
+        <label>
+          <span>昵称</span>
+          <input v-model="publicRoomNickname" maxlength="24" autocomplete="nickname" autofocus />
+        </label>
+        <div v-if="publicRoomError" class="public-room-error">{{ publicRoomError }}</div>
+        <div class="public-room-modal-actions">
+          <button v-if="publicRoomDialog.mode === 'create'" type="button" class="public-room-secondary" @click="publicRoomDialog.visible = false">取消</button>
+          <button type="submit" class="public-room-primary" :disabled="publicRoomSubmitting">{{ publicRoomSubmitting ? '处理中...' : '确定' }}</button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 <script>
@@ -311,6 +405,7 @@ import {
   conversationsApi,
   publicConversationsApi,
   publicWorkflowsApi,
+  publicRoomsApi,
   publicAudioApi,
   tasksApi,
   executionApi,
@@ -466,6 +561,8 @@ export default {
     publicMode: { type: Boolean, default: false },
     workflowId: { type: String, default: '' },
     shareToken: { type: String, default: ''},
+    publicRoomId: { type: String, default: '' },
+    publicRoomToken: { type: String, default: '' },
   },
   data() {
     return {
@@ -483,6 +580,36 @@ export default {
       mobileConfigOpen: false,
       workflowLoadError: '',
       publicSessionReady: false,
+      publicRoomSessionReady: false,
+      publicRoomState: null,
+      publicRoomParticipants: [],
+      publicRoomTyping: [],
+      publicRoomJoined: false,
+      publicRoomNickname: '',
+      publicRoomError: '',
+      publicRoomSubmitting: false,
+      publicRoomPollingTimer: null,
+      publicRoomTypingTimer: null,
+      publicRoomTypingRequestTimer: null,
+      publicRoomLastTypingValue: false,
+      publicRoomLastVersion: null,
+      publicRoomDialog: { visible: false, mode: 'join' },
+      publicRoomShareLink: '',
+      publicRoomRunInProgress: false,
+      publicRoomChatOpen: false,
+      publicRoomChatMessages: [],
+      publicRoomChatLastId: '',
+      publicRoomChatLoaded: false,
+      publicRoomChatUnread: 0,
+      publicRoomChatDraft: '',
+      publicRoomChatSending: false,
+      publicRoomChatError: '',
+      publicRoomChatPosition: { x: null, y: null },
+      publicRoomChatDragging: null,
+      publicRoomChatDragMoved: false,
+      publicRoomEvents: null,
+      publicRoomEventsRetryTimer: null,
+      publicRoomStreamingMessageId: '',
       isStreaming: false,
       streamingContent: '',
       reasoningContent: '',
@@ -558,6 +685,32 @@ export default {
   },
   computed: {
     isPublicMode() { return this.publicMode },
+    isPublicRoomMode() { return this.isPublicMode && !!this.publicRoomId },
+    publicRoomBusy() {
+      return this.publicRoomRunInProgress || this.publicRoomState?.status === 'running'
+    },
+    publicRoomStatusText() {
+      if (!this.isPublicRoomMode) return ''
+      if (!this.publicRoomJoined) return '需要输入昵称后加入公开会话'
+      if (this.publicRoomBusy) {
+        const name = this.publicRoomState?.running_nickname || '其他玩家'
+        return `${name} 正在等待智能体回复`
+      }
+      const count = this.publicRoomParticipants.length
+      return count > 0 ? `${count} 人在会话中` : '公开会话已就绪'
+    },
+    publicRoomTypingText() {
+      if (!this.isPublicRoomMode || !this.publicRoomTyping.length) return ''
+      const names = this.publicRoomTyping.map(item => item.nickname).filter(Boolean).slice(0, 3)
+      if (!names.length) return ''
+      return `${names.join('、')} 正在输入`
+    },
+    publicRoomChatPanelStyle() {
+      const position = this.publicRoomChatPosition || {}
+      if (this.publicRoomChatOpen && typeof window !== 'undefined' && window.innerWidth <= 768) return {}
+      if (position.x === null || position.y === null) return {}
+      return { left: `${position.x}px`, top: `${position.y}px`, right: 'auto', bottom: 'auto' }
+    },
     userInputField() {
       if (!this.userInputFieldName || !this.formConfig) return null
       return this.formConfig.find(f => f.name === this.userInputFieldName)
@@ -585,9 +738,12 @@ export default {
     hasFormFields() { return this.formFields.length > 0 },
     inputEnabled() {
       if (this.workflowLoadError) return false
+      if (this.isPublicRoomMode && !this.publicRoomJoined) return false
       if (this.isInitializing || !this.conversationId) return false
       if (!this.userInputFieldName && !(this.workflowStatus === 'interrupted' && this.humanWaitingFor)) return false
-      return ['idle', 'interrupted', 'finished', 'cancelled'].includes(this.workflowStatus)
+      const enabledStatuses = ['idle', 'interrupted', 'finished', 'cancelled']
+      if (this.isPublicRoomMode) enabledStatuses.push('running')
+      return enabledStatuses.includes(this.workflowStatus)
     },
     canManualCompressContext() {
       return !this.isPublicMode && !this.isStreaming && !this.isCompressingContext && !!this.currentWorkflowId && !!this.conversationId && this.messages.length > 0
@@ -628,6 +784,8 @@ export default {
     inputPlaceholder() {
       if (this.workflowLoadError) return this.$t('agentChat.workflowUnavailable')
       if (this.isInitializing) return this.$t('common.loading')
+      if (this.isPublicRoomMode && !this.publicRoomJoined) return '输入昵称后加入公开会话'
+      if (this.isPublicRoomMode && this.publicRoomBusy) return this.publicRoomStatusText
       if (!this.userInputFieldName) {
         const hasVisibleFormFields = (this.formFields || []).length > 0
         return hasVisibleFormFields ? this.$t('agentChat.formOnlyInputPlaceholder') : this.$t('agentChat.noUserInput')
@@ -639,6 +797,18 @@ export default {
       if (this.workflowStatus === 'finished') return this.$t('agentChat.startNewRound')
       const field = this.userInputField
       return field?.label || this.$t('agentChat.enterQuestion')
+    },
+    showStreamingMessage() {
+      if (this.isCompressingContext) return true
+      if (!this.isStreaming) return false
+      return !!(
+        this.streamingContent ||
+        this.reasoningContent ||
+        (this.nodeSteps && this.nodeSteps.length > 0) ||
+        (this.currentToolCalls && this.currentToolCalls.length > 0) ||
+        (this.todoItems && this.todoItems.length > 0) ||
+        this.thinkingStatus
+      )
     },
     hasFormConfig() { return this.formConfig && this.formConfig.length > 0 },
     convApi() { return this.isPublicMode ? publicConversationsApi : conversationsApi },
@@ -731,6 +901,8 @@ export default {
       return !this.showAllMessages && this.hiddenCount > 0
     },
     hasProcessMessages() {
+      if (this.isPublicRoomMode) return false
+      if (this.isPublicMode) return false
       if (this.nodeSteps.length > 0 || this.reasoningContent) return true
       return this.messages.some(msg => {
         if (msg.role !== 'assistant') return false
@@ -743,6 +915,7 @@ export default {
   watch: {
     inputText() {
       this.validateInput()
+      this.submitPublicRoomTyping()
     },
   },
   async mounted() {
@@ -750,9 +923,13 @@ export default {
     this.isInitializing = true
     try {
       if (this.isPublicMode) {
-        await this.loadWorkflow()
-        if (!this.workflowLoadError) await this.ensurePublicSession()
-        await this.loadConversations()
+        if (this.isPublicRoomMode) {
+          await this.initializePublicRoom()
+        } else {
+          await this.loadWorkflow()
+          if (!this.workflowLoadError) await this.ensurePublicSession()
+          await this.loadConversations()
+        }
       } else {
         const tasks = [
           this.loadWorkflow(),
@@ -761,6 +938,7 @@ export default {
         tasks.push(this.checkUploadStatus(), this.loadModels(), this.loadToolConfig())
         await Promise.all(tasks)
       }
+      if (this.isPublicRoomMode) return
       const convId = this.$route.query.conversation_id
       const seedInput = consumeRouteSeedInput(this)
       const hasKnownPublicConversation = this.conversations.some(c => c.id === convId)
@@ -794,6 +972,11 @@ export default {
     this.unsubscribeFromRun?.()
     this.stopSpeechStream?.()
     this.stopTtsPlayback?.()
+    this.stopPublicRoomEvents?.()
+    this.stopPublicRoomPolling?.()
+    this.stopPublicRoomChatDrag?.()
+    if (this.publicRoomTypingTimer) window.clearTimeout(this.publicRoomTypingTimer)
+    if (this.publicRoomTypingRequestTimer) window.clearTimeout(this.publicRoomTypingRequestTimer)
   },
   methods: {
     async toggleSpeechInput() {
@@ -910,10 +1093,12 @@ export default {
     },
     async transcribePublicSpeech(file) {
       await this.ensurePublicSession()
+      if (this.isPublicRoomMode) return publicAudioApi.roomSpeechToText(this.publicRoomId, file)
       return publicAudioApi.speechToText(this.currentWorkflowId, this.shareToken, file)
     },
     async synthesizePublicSpeech(text) {
       await this.ensurePublicSession()
+      if (this.isPublicRoomMode) return publicAudioApi.roomTextToSpeech(this.publicRoomId, { text })
       return publicAudioApi.textToSpeech(this.currentWorkflowId, this.shareToken, { text })
     },
     messageAudioKey(msg) {
@@ -995,6 +1180,141 @@ export default {
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
     },
+    publicRoomChatPositionKey() {
+      return `agentclaw.publicRoom.${this.publicRoomId}.chatPosition`
+    },
+    restorePublicRoomChatPosition() {
+      if (!this.isPublicRoomMode || typeof window === 'undefined') return
+      try {
+        const saved = JSON.parse(localStorage.getItem(this.publicRoomChatPositionKey()) || 'null')
+        if (!saved || typeof saved.x !== 'number' || typeof saved.y !== 'number') return
+        this.publicRoomChatPosition = this.constrainPublicRoomChatPosition(saved.x, saved.y)
+      } catch (error) {}
+    },
+    constrainPublicRoomChatPosition(x, y) {
+      if (typeof window === 'undefined') return { x, y }
+      const panelWidth = this.publicRoomChatOpen ? 320 : 92
+      const panelHeight = this.publicRoomChatOpen ? 420 : 48
+      return {
+        x: Math.min(Math.max(12, x), Math.max(12, window.innerWidth - panelWidth - 12)),
+        y: Math.min(Math.max(12, y), Math.max(12, window.innerHeight - panelHeight - 12)),
+      }
+    },
+    startPublicRoomChatDrag(event) {
+      if (typeof window === 'undefined') return
+      if (this.publicRoomChatOpen && window.innerWidth <= 768) return
+      const point = event.touches?.[0] || event
+      const current = this.publicRoomChatPosition || {}
+      const rect = event.currentTarget?.closest?.('.public-room-player-chat')?.getBoundingClientRect?.()
+      const startX = current.x ?? rect?.left ?? Math.max(12, window.innerWidth - 344)
+      const startY = current.y ?? rect?.top ?? Math.max(12, window.innerHeight - 444)
+      this.publicRoomChatDragging = {
+        pointerX: point.clientX,
+        pointerY: point.clientY,
+        startX,
+        startY,
+      }
+      this.publicRoomChatDragMoved = false
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', this.onPublicRoomChatDragMove)
+      document.addEventListener('mouseup', this.stopPublicRoomChatDrag)
+      document.addEventListener('touchmove', this.onPublicRoomChatDragMove, { passive: false })
+      document.addEventListener('touchend', this.stopPublicRoomChatDrag)
+    },
+    onPublicRoomChatDragMove(event) {
+      if (!this.publicRoomChatDragging) return
+      event.preventDefault?.()
+      const point = event.touches?.[0] || event
+      const drag = this.publicRoomChatDragging
+      const next = this.constrainPublicRoomChatPosition(
+        drag.startX + point.clientX - drag.pointerX,
+        drag.startY + point.clientY - drag.pointerY,
+      )
+      if (Math.abs(point.clientX - drag.pointerX) > 4 || Math.abs(point.clientY - drag.pointerY) > 4) {
+        this.publicRoomChatDragMoved = true
+      }
+      this.publicRoomChatPosition = next
+    },
+    stopPublicRoomChatDrag() {
+      if (!this.publicRoomChatDragging) return
+      this.publicRoomChatDragging = null
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', this.onPublicRoomChatDragMove)
+      document.removeEventListener('mouseup', this.stopPublicRoomChatDrag)
+      document.removeEventListener('touchmove', this.onPublicRoomChatDragMove)
+      document.removeEventListener('touchend', this.stopPublicRoomChatDrag)
+      try {
+        localStorage.setItem(this.publicRoomChatPositionKey(), JSON.stringify(this.publicRoomChatPosition))
+      } catch (error) {}
+    },
+    openPublicRoomChat() {
+      if (this.publicRoomChatDragMoved) {
+        this.publicRoomChatDragMoved = false
+        return
+      }
+      this.publicRoomChatOpen = true
+      this.publicRoomChatUnread = 0
+      this.$nextTick(() => this.scrollPublicRoomChatToBottom())
+    },
+    scrollPublicRoomChatToBottom() {
+      const el = this.$refs.publicRoomChatMessages
+      if (el) el.scrollTop = el.scrollHeight
+    },
+    applyPublicRoomChatMessages(messages, append = false, countUnread = true) {
+      const list = Array.isArray(messages) ? messages : []
+      if (!list.length) return
+      const existing = new Set(this.publicRoomChatMessages.map(item => item.id))
+      const next = list.filter(item => item?.id && !existing.has(item.id))
+      if (!next.length) return
+      this.publicRoomChatMessages = append ? [...this.publicRoomChatMessages, ...next] : next
+      this.publicRoomChatLastId = this.publicRoomChatMessages[this.publicRoomChatMessages.length - 1]?.id || ''
+      if (this.publicRoomChatOpen) this.$nextTick(() => this.scrollPublicRoomChatToBottom())
+      else if (countUnread) this.publicRoomChatUnread += next.length
+    },
+    ensurePublicRoomChatStarted() {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined || this.publicRoomChatLoaded) return
+      this.publicRoomChatLoaded = true
+      if (typeof window !== 'undefined' && window.innerWidth > 768) this.publicRoomChatOpen = true
+      this.restorePublicRoomChatPosition()
+      this.loadPublicRoomChatMessages({ initial: true })
+    },
+    async loadPublicRoomChatMessages({ initial = false } = {}) {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined) return
+      try {
+        const data = await publicRoomsApi.listChat(
+          this.publicRoomId,
+          initial ? '' : this.publicRoomChatLastId,
+          100,
+        )
+        this.applyPublicRoomChatMessages(data.messages, !initial, !initial)
+        if (initial) this.publicRoomChatUnread = 0
+      } catch (error) {
+        console.error('刷新玩家聊天失败:', error)
+      }
+    },
+    async sendPublicRoomChatMessage() {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined || this.publicRoomChatSending) return
+      const content = String(this.publicRoomChatDraft || '').trim()
+      if (!content) return
+      this.publicRoomChatSending = true
+      this.publicRoomChatError = ''
+      try {
+        const message = await publicRoomsApi.sendChat(this.publicRoomId, content)
+        this.publicRoomChatDraft = ''
+        this.applyPublicRoomChatMessages([message], true)
+        this.openPublicRoomChat()
+      } catch (error) {
+        console.error('发送玩家聊天失败:', error)
+        this.publicRoomChatError = error.response?.data?.error || error.message || '发送失败'
+      } finally {
+        this.publicRoomChatSending = false
+      }
+    },
+    formatPublicRoomChatTime(value) {
+      const date = new Date(Number(value || 0))
+      if (Number.isNaN(date.getTime())) return ''
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    },
     formatTokenCount(tokens) {
       if (!tokens) return '0'
       return tokens < 1000 ? String(tokens) : (tokens / 1000).toFixed(1) + 'K'
@@ -1008,25 +1328,357 @@ export default {
             ? publicWorkflowsApi.get(this.currentWorkflowId, this.shareToken)
             : workflowsApi.get(this.currentWorkflowId),
         )
-        const workflow = localizeBuiltinWorkflow(data.workflow, this.$t.bind(this))
-        this.workflowName = workflow.name
-        this.workflowDesc = workflow.description
-        this.workflowWelcome = workflow.welcome || ''
-        this.chatAudio = workflow.chat_audio || null
-        this.inputSchema = workflow.input_schema
-        this.formConfig = workflow.form_config
-        this.userInputFieldName = workflow.user_input_field
-        this.isBuiltin = workflow.is_builtin || false
-        this.initFormData()
+        this.applyWorkflowPayload(data.workflow)
       } catch (error) {
         console.error('加载工作流失败:', error)
         this.workflowLoadError = error.response?.data?.error || error.message || this.$t('agentChat.workflowUnavailable')
       }
     },
+    applyWorkflowPayload(rawWorkflow) {
+      const workflow = localizeBuiltinWorkflow(rawWorkflow, this.$t.bind(this))
+      this.currentWorkflowId = workflow.id || this.currentWorkflowId
+      this.workflowName = workflow.name
+      this.workflowDesc = workflow.description
+      this.workflowWelcome = workflow.welcome || ''
+      this.chatAudio = workflow.chat_audio || null
+      this.inputSchema = workflow.input_schema
+      this.formConfig = workflow.form_config
+      this.userInputFieldName = workflow.user_input_field
+      this.isBuiltin = workflow.is_builtin || false
+      this.initFormData()
+    },
     async ensurePublicSession() {
       if (!this.isPublicMode || this.publicSessionReady) return
+      if (this.isPublicRoomMode) {
+        await this.ensurePublicRoomSession()
+        return
+      }
       await publicWorkflowsApi.openSession(this.currentWorkflowId, this.shareToken)
       this.publicSessionReady = true
+    },
+    async ensurePublicRoomSession() {
+      if (!this.isPublicRoomMode || this.publicRoomSessionReady) return
+      await publicRoomsApi.openSession(this.publicRoomId, this.publicRoomToken)
+      this.publicRoomSessionReady = true
+      this.publicSessionReady = true
+    },
+    publicRoomNicknameKey() {
+      return `agentclaw.publicRoom.${this.publicRoomId || this.currentWorkflowId}.nickname`
+    },
+    normalizePublicRoomNickname(value) {
+      return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 24)
+    },
+    buildPublicRoomShareLink(roomId = this.publicRoomId, roomToken = this.publicRoomToken) {
+      if (!roomId || !roomToken) return ''
+      const url = new URL(window.location.href)
+      url.searchParams.set('room_id', roomId)
+      url.searchParams.set('room_token', roomToken)
+      url.searchParams.delete('share_token')
+      url.searchParams.delete('token')
+      url.searchParams.delete('conversation_id')
+      return url.toString()
+    },
+    async initializePublicRoom() {
+      this.workflowLoadError = ''
+      this.publicRoomError = ''
+      try {
+        await this.ensurePublicRoomSession()
+        const data = await publicRoomsApi.bootstrap(this.publicRoomId, this.publicRoomToken)
+        this.applyWorkflowPayload(data.workflow)
+        this.publicRoomJoined = !!data.joined
+        this.applyPublicRoomShell(data.room)
+        this.publicRoomShareLink = this.buildPublicRoomShareLink()
+        const savedNickname = localStorage.getItem(this.publicRoomNicknameKey()) || ''
+        this.publicRoomNickname = this.normalizePublicRoomNickname(savedNickname)
+        if (this.publicRoomJoined) {
+          const state = await publicRoomsApi.state(this.publicRoomId, null)
+          this.applyPublicRoomState(state)
+          this.startPublicRoomPolling()
+        } else {
+          this.publicRoomDialog = { visible: true, mode: 'join' }
+          this.messages = withWorkflowWelcome(this, [])
+        }
+      } catch (error) {
+        console.error('加载公开会话失败:', error)
+        this.workflowLoadError = error.response?.data?.error || error.message || this.$t('agentChat.workflowUnavailable')
+      }
+    },
+    applyPublicRoomShell(room) {
+      if (!room) return
+      this.publicRoomState = room
+      this.publicRoomLastVersion = room.version ?? this.publicRoomLastVersion
+      this.conversationId = room.conversation_id || this.conversationId
+      if (this.conversationId) {
+        ensureLocalConversation(this, this.conversationId, this.messages)
+      }
+    },
+    applyPublicRoomState(state) {
+      if (!state) return
+      this.applyPublicRoomShell(state.room)
+      this.publicRoomParticipants = Array.isArray(state.participants) ? state.participants : []
+      this.publicRoomTyping = Array.isArray(state.typing) ? state.typing : []
+      this.publicRoomJoined = true
+      this.ensurePublicRoomChatStarted()
+      this.startPublicRoomEvents()
+      if (state.conversation && Array.isArray(state.conversation.messages)) {
+        this.messages = this.normalizeAssistantMessages(withWorkflowWelcome(this, state.conversation.messages))
+        this.publicRoomStreamingMessageId = ''
+        this.streamingContent = ''
+        this.isStreaming = false
+        const conv = ensureLocalConversation(this, this.conversationId, this.messages)
+        if (conv) {
+          conv.messages = this.messages
+          conv.updated_at = Date.now()
+          this.conversations = [conv]
+        }
+        this.scrollToBottom()
+      }
+      if (this.publicRoomState?.status !== 'running') {
+        this.publicRoomRunInProgress = false
+        if (this.workflowStatus === 'running') this.workflowStatus = 'finished'
+        if (!this.isStreaming) this.thinkingStatus = null
+      }
+    },
+    startPublicRoomEvents() {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined || this.publicRoomEvents || typeof EventSource === 'undefined') return
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
+      const events = new EventSource(publicRoomsApi.eventsUrl(this.publicRoomId, baseUrl))
+      events.onmessage = (message) => {
+        try {
+          this.handlePublicRoomEvent(JSON.parse(message.data))
+        } catch (error) {
+          console.warn('解析公开会话事件失败:', error)
+        }
+      }
+      events.onerror = () => {
+        this.stopPublicRoomEvents()
+        this.publicRoomEventsRetryTimer = window.setTimeout(() => {
+          this.publicRoomEventsRetryTimer = null
+          this.startPublicRoomEvents()
+        }, 2000)
+      }
+      this.publicRoomEvents = events
+    },
+    stopPublicRoomEvents() {
+      if (this.publicRoomEventsRetryTimer) {
+        window.clearTimeout(this.publicRoomEventsRetryTimer)
+        this.publicRoomEventsRetryTimer = null
+      }
+      if (this.publicRoomEvents) {
+        this.publicRoomEvents.close()
+        this.publicRoomEvents = null
+      }
+    },
+    handlePublicRoomEvent(event) {
+      if (!event || event.room_id !== this.publicRoomId) return
+      switch (event.event) {
+        case 'agent_run_started':
+          this.publicRoomRunInProgress = true
+          this.workflowStatus = 'running'
+          this.isStreaming = true
+          this.streamingContent = ''
+          this.reasoningContent = ''
+          this.nodeSteps = []
+          this.currentToolCalls = []
+          this.todoItems = []
+          this.publicRoomStreamingMessageId = event.message_id || ''
+          this.thinkingStatus = { icon: '', text: this.$t('agentChat.thinking') }
+          break
+        case 'agent_message_delta':
+          this.appendPublicRoomStreamingDelta(event)
+          break
+        case 'agent_node_started':
+          this.applyPublicRoomNodeStarted(event)
+          break
+        case 'agent_node_finished':
+          this.applyPublicRoomNodeFinished(event)
+          break
+        case 'agent_run_finished':
+          this.finishPublicRoomStreaming()
+          this.pollPublicRoomState()
+          break
+        case 'agent_run_failed':
+          this.finishPublicRoomStreaming()
+          this.setTimedInputError(event.error || '公开会话运行失败')
+          this.pollPublicRoomState()
+          break
+        case 'ping':
+          break
+      }
+    },
+    appendPublicRoomStreamingDelta(event) {
+      const delta = String(event?.delta || '')
+      if (!delta) return
+      const messageId = event.message_id || this.publicRoomStreamingMessageId || `public-room-stream-${Date.now()}`
+      this.publicRoomStreamingMessageId = messageId
+      this.isStreaming = true
+      this.workflowStatus = 'running'
+      this.thinkingStatus = null
+      this.streamingContent += delta
+      this.scrollToBottom()
+    },
+    applyPublicRoomNodeStarted(event) {
+      const nodeId = event.node_id || event.node
+      if (!nodeId) return
+      this.isStreaming = true
+      this.workflowStatus = 'running'
+      this.ensureProcessVisibleForFirstRun()
+      if (this.nodeSteps.find(step => step.id === nodeId && step.status === 'running')) return
+      const nodeType = event.node_type || event.type || 'unknown'
+      this.nodeSteps.push(this.localizeNodeStep({
+        id: nodeId,
+        name: event.title || nodeId,
+        type: nodeType,
+        typeLabel: this.getNodeTypeLabel(nodeType),
+        status: 'running',
+        startTime: Date.now(),
+        elapsed: null,
+        inputs: null,
+        outputs: null,
+        error: null,
+        toolCalls: [],
+        segments: [],
+        showAllTools: false,
+        expanded: false,
+        parallelGroupId: event.parallel_group_id || null,
+      }))
+      if (nodeType.toLowerCase().includes('llm')) this.thinkingStatus = { icon: '', text: this.$t('agentChat.thinking') }
+      else this.thinkingStatus = { icon: '', text: this.$t('agentChat.executingNode', { nodeId }) }
+      this.scrollToBottom()
+    },
+    applyPublicRoomNodeFinished(event) {
+      const nodeId = event.node_id || event.node
+      if (!nodeId) return
+      this.isStreaming = true
+      this.workflowStatus = 'running'
+      const step = this.nodeSteps.find(item => item.id === nodeId && item.status === 'running')
+      if (!step) return
+      step.status = event.status || 'succeeded'
+      if (event.error) step.error = event.error
+      if (event.elapsed_time !== undefined && event.elapsed_time !== null) {
+        const elapsed = Number(event.elapsed_time)
+        if (Number.isFinite(elapsed)) step.elapsed = elapsed < 1 ? `${Math.round(elapsed * 1000)}ms` : `${elapsed.toFixed(1)}s`
+      } else if (step.startTime) {
+        const elapsed = (Date.now() - step.startTime) / 1000
+        step.elapsed = elapsed < 1 ? `${Math.round(elapsed * 1000)}ms` : `${elapsed.toFixed(1)}s`
+      }
+      step.inputs = null
+      step.outputs = null
+      step.toolCalls = []
+      step.segments = []
+      if (!this.nodeSteps.some(item => item.status === 'running')) this.thinkingStatus = null
+      this.scrollToBottom()
+    },
+    finishPublicRoomStreaming() {
+      this.publicRoomRunInProgress = false
+      this.workflowStatus = 'finished'
+      this.isStreaming = false
+      this.streamingContent = ''
+      this.thinkingStatus = null
+      this.reasoningContent = ''
+      this.nodeSteps = []
+      this.currentToolCalls = []
+      this.todoItems = []
+    },
+    startPublicRoomPolling() {
+      if (!this.isPublicRoomMode || this.publicRoomPollingTimer) return
+      this.publicRoomPollingTimer = window.setInterval(() => this.pollPublicRoomState(), 2000)
+    },
+    stopPublicRoomPolling() {
+      if (this.publicRoomPollingTimer) {
+        window.clearInterval(this.publicRoomPollingTimer)
+        this.publicRoomPollingTimer = null
+      }
+    },
+    async pollPublicRoomState() {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined) return
+      try {
+        const state = await publicRoomsApi.state(this.publicRoomId, this.publicRoomLastVersion)
+        this.applyPublicRoomState(state)
+        await this.loadPublicRoomChatMessages()
+      } catch (error) {
+        console.error('刷新公开会话失败:', error)
+      }
+    },
+    openCreatePublicRoom() {
+      this.publicRoomError = ''
+      this.publicRoomNickname = this.normalizePublicRoomNickname(localStorage.getItem(this.publicRoomNicknameKey()) || this.publicRoomNickname)
+      this.publicRoomDialog = { visible: true, mode: 'create' }
+    },
+    async submitPublicRoomDialog() {
+      if (this.publicRoomDialog.mode === 'create') return this.createPublicRoom()
+      return this.joinPublicRoom()
+    },
+    async createPublicRoom() {
+      const nickname = this.normalizePublicRoomNickname(this.publicRoomNickname)
+      if (!nickname) { this.publicRoomError = '请输入昵称'; return }
+      this.publicRoomSubmitting = true
+      this.publicRoomError = ''
+      try {
+        await this.ensurePublicSession()
+        const created = await publicRoomsApi.create(this.currentWorkflowId, this.shareToken, { nickname })
+        localStorage.setItem(this.publicRoomNicknameKey(), nickname)
+        const room = created.room || {}
+        const roomToken = created.room_token || ''
+        if (room.id) localStorage.setItem(`agentclaw.publicRoom.${room.id}.nickname`, nickname)
+        const query = { ...this.$route.query, room_id: room.id, room_token: roomToken }
+        delete query.conversation_id
+        await this.$router.replace({ name: 'PublicAgent', params: { id: this.currentWorkflowId }, query })
+      } catch (error) {
+        console.error('创建公开会话失败:', error)
+        this.publicRoomError = error.response?.data?.error || error.message || '创建公开会话失败'
+      } finally {
+        this.publicRoomSubmitting = false
+      }
+    },
+    async joinPublicRoom() {
+      const nickname = this.normalizePublicRoomNickname(this.publicRoomNickname)
+      if (!nickname) { this.publicRoomError = '请输入昵称'; return }
+      this.publicRoomSubmitting = true
+      this.publicRoomError = ''
+      try {
+        await this.ensurePublicRoomSession()
+        const state = await publicRoomsApi.join(this.publicRoomId, this.publicRoomToken, { nickname })
+        localStorage.setItem(this.publicRoomNicknameKey(), nickname)
+        this.publicRoomDialog = { visible: false, mode: 'join' }
+        this.applyPublicRoomState(state)
+        this.startPublicRoomPolling()
+        await this.loadPublicRoomChatMessages({ initial: true })
+      } catch (error) {
+        console.error('加入公开会话失败:', error)
+        this.publicRoomError = error.response?.data?.error || error.message || '加入公开会话失败'
+      } finally {
+        this.publicRoomSubmitting = false
+      }
+    },
+    async submitPublicRoomTyping() {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined) return
+      const typing = !!this.inputText.trim()
+      window.clearTimeout(this.publicRoomTypingTimer)
+      window.clearTimeout(this.publicRoomTypingRequestTimer)
+      this.publicRoomTypingRequestTimer = window.setTimeout(async () => {
+        if (typing === this.publicRoomLastTypingValue) return
+        this.publicRoomLastTypingValue = typing
+        try {
+          await publicRoomsApi.typing(this.publicRoomId, typing)
+        } catch (error) {}
+      }, 800)
+      if (typing) {
+        this.publicRoomTypingTimer = window.setTimeout(() => {
+          this.publicRoomLastTypingValue = false
+          publicRoomsApi.typing(this.publicRoomId, false).catch(() => {})
+        }, 3000)
+      }
+    },
+    async copyPublicRoomLink() {
+      const link = this.publicRoomShareLink || this.buildPublicRoomShareLink()
+      if (!link) return
+      try {
+        await navigator.clipboard.writeText(link)
+        this.setTimedInputError('公开会话链接已复制')
+      } catch (error) {
+        this.setTimedInputError(link)
+      }
     },
     async checkUploadStatus() {
       if (this.isPublicMode) { this.uploadAvailable = false; return }
@@ -1336,8 +1988,10 @@ export default {
     },
     getRenderableMessages(messages = this.messages) {
       const source = Array.isArray(messages) ? messages : []
-      if (!this.isStreaming) return source
-      return source.filter(msg => !(msg?.role === 'assistant' && msg.streamingDraft))
+      const filtered = this.isStreaming
+        ? source.filter(msg => !(msg?.role === 'assistant' && (msg.streamingDraft || msg.publicRoomStreaming)))
+        : source
+      return filtered
     },
     getRunKey(conversationId = this.conversationId) {
       return getManagedRunKey(this, conversationId)
@@ -1663,8 +2317,9 @@ export default {
       }
     },
     async sendMessage() {
-      if (this.isStreaming) { this.abortRequest(); return }
       if (this.isInitializing) return
+      if (this.isPublicRoomMode) return this.runPublicRoomMessage()
+      if (this.isStreaming) { this.abortRequest(); return }
       if (!this.conversationId && !ensureConversationIdForRun(this)) return
       this.validateInput()
       if (!this.inputText.trim() || this.inputError) return
@@ -1698,6 +2353,75 @@ export default {
         if (this.workflowStatus === 'running') this.workflowStatus = 'finished'
         this.thinkingStatus = null; this.currentToolCalls = []; this.updateCurrentConversation(); this.scrollToBottom()
         this.finishManagedRun()
+      }
+    },
+    async runPublicRoomMessage(explicitUserInput = undefined) {
+      if (!this.isPublicRoomMode || !this.publicRoomJoined || this.publicRoomBusy) return
+      this.validateInput()
+      const userMessage = explicitUserInput === undefined ? this.inputText.trim() : String(explicitUserInput || '').trim()
+      if (this.userInputFieldName && !userMessage) return
+      if (this.inputError) return
+      if (!this.validateFormData()) return
+
+      const draftText = this.inputText
+      this.inputText = ''
+      this.inputError = ''
+      this.currentPromptTokens = 0
+      this.currentCompletionTokens = 0
+      this.$nextTick(() => { if (this.$refs.chatInput) this.$refs.chatInput.resetHeight() })
+      if (userMessage) {
+        this.messages.push({
+          role: 'user',
+          content: userMessage,
+          timestamp: Date.now(),
+          sender_type: 'public_room_participant',
+          sender: { nickname: this.publicRoomNickname },
+        })
+      }
+      this.scrollToBottom()
+      this.saveFormCache()
+      this.publicRoomRunInProgress = true
+      this.isStreaming = true
+      this.workflowStatus = 'running'
+      this.streamingContent = ''
+      this.currentToolCalls = []
+      this.nodeSteps = []
+      this.todoItems = []
+      this.reasoningContent = ''
+      this.thinkingStatus = { icon: '', text: this.$t('agentChat.thinking') }
+      try {
+        await publicRoomsApi.typing(this.publicRoomId, false)
+        const inputs = buildWorkflowRunInputs({
+          baseInputs: this.formData,
+          userInput: userMessage || null,
+          inputField: this.userInputFieldName,
+        })
+        const body = {
+          response_mode: 'streaming',
+          inputs,
+        }
+        if (userMessage) body.user = userMessage
+        await publicRoomsApi.run(this.publicRoomId, body)
+        const state = await publicRoomsApi.state(this.publicRoomId, null)
+        this.applyPublicRoomState(state)
+      } catch (error) {
+        if (error?.response?.status === 409) {
+          const running = error.response?.data?.running_nickname || '其他玩家'
+          this.setTimedInputError(`${running} 正在等待智能体回复`)
+          if (!this.inputText && draftText) this.inputText = draftText
+          await this.pollPublicRoomState()
+          return
+        }
+        console.error('公开会话发送失败:', error)
+        this.messages.push({ role: 'assistant', content: this.getRequestFailedMessage(error), timestamp: Date.now() })
+      } finally {
+        this.publicRoomRunInProgress = false
+        if (this.workflowStatus === 'running') this.workflowStatus = 'finished'
+        this.thinkingStatus = null
+        this.currentToolCalls = []
+        this.todoItems = []
+        this.reasoningContent = ''
+        this.scrollToBottom()
       }
     },
     handleApproval(msg, index, action) {
@@ -1782,6 +2506,7 @@ export default {
     },
     async startWorkflow() {
       if (!this.canStartWorkflow) return
+      if (this.isPublicRoomMode) return this.runPublicRoomMessage(null)
       if (!this.validateFormData()) return
       this.saveFormCache()
       this.lastStreamingDraftPersistAt = 0
@@ -2478,9 +3203,269 @@ export default {
 .model-option:hover { background: var(--bg-hover); }
 .model-option.active { background: var(--accent-bg); color: var(--accent-main); font-weight: 500; }
 
-.public-header { padding: 24px; text-align: center; border-bottom: 1px solid var(--border-light); }
-.public-header h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
-.public-header p { font-size: 13px; color: var(--text-muted); margin: 0; }
+.public-header { padding: 18px 24px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: center; gap: 16px; }
+.public-header-copy { min-width: 0; text-align: center; }
+.public-header h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
+.public-header p { font-size: 13px; color: var(--text-muted); margin: 0; overflow-wrap: anywhere; }
+.public-room-actions { display: flex; flex-shrink: 0; gap: 8px; }
+.public-room-btn,
+.public-room-link-btn {
+  border: 1px solid rgba(59,130,246,0.28);
+  background: rgba(219,234,254,0.74);
+  color: #1d4ed8;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.public-room-btn:hover,
+.public-room-link-btn:hover { background: rgba(191,219,254,0.9); }
+.public-room-bar {
+  width: min(880px, calc(100% - 48px));
+  min-width: 0;
+  margin: 0 auto 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226,232,240,0.95);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.86);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-sec);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.public-room-bar-main { min-width: 0; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.public-room-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; background: #22c55e; }
+.public-room-dot.running { background: #f59e0b; }
+.public-room-typing { min-width: 0; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-room-link-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
+.public-room-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(15,23,42,0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.public-room-modal {
+  width: min(360px, 100%);
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(226,232,240,0.95);
+  background: #fff;
+  box-shadow: 0 24px 64px -32px rgba(15,23,42,0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.public-room-modal h3 { margin: 0; font-size: 18px; line-height: 1.4; color: var(--text-main); }
+.public-room-modal p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.public-room-modal label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-sec); }
+.public-room-modal input {
+  width: 100%;
+  border: 1px solid var(--border-base, #e4e4e7);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-main, #18181b);
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  appearance: none;
+}
+.public-room-modal input:focus { border-color: var(--accent-main, #3b82f6); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+.public-room-error { color: var(--danger-main, #ef4444); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.public-room-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.public-room-secondary,
+.public-room-primary {
+  border: 1px solid var(--border-base, #e4e4e7);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.public-room-secondary { background: #fff; border-color: var(--border-base, #e4e4e7); color: var(--text-sec, #52525b); }
+.public-room-secondary:hover { background: #f8fafc; color: var(--text-main, #18181b); }
+.public-room-primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.public-room-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.public-room-player-chat {
+  position: fixed;
+  right: 22px;
+  bottom: 92px;
+  z-index: 72;
+  width: 320px;
+  color: var(--text-main);
+}
+.public-room-player-chat.collapsed {
+  width: auto;
+}
+.public-room-chat-fab {
+  min-width: 84px;
+  height: 42px;
+  border: 1px solid rgba(191,219,254,0.95);
+  border-radius: 999px;
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  position: relative;
+  padding: 0 16px;
+}
+.public-room-chat-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+}
+.public-room-chat-panel {
+  width: 320px;
+  height: min(420px, calc(100vh - 132px));
+  border: 1px solid rgba(226,232,240,0.95);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.98);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.public-room-chat-header {
+  min-height: 48px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-light);
+  cursor: move;
+  user-select: none;
+}
+.public-room-chat-header strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.public-room-chat-header span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.public-room-chat-header button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-sec);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+.public-room-chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #f8fafc;
+}
+.public-room-chat-empty {
+  margin: auto;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.public-room-chat-message {
+  padding: 8px 10px;
+  border: 1px solid rgba(226,232,240,0.9);
+  border-radius: 10px;
+  background: #fff;
+}
+.public-room-chat-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.public-room-chat-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-sec);
+  font-weight: 600;
+}
+.public-room-chat-content {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.public-room-chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border-light);
+  background: #fff;
+}
+.public-room-chat-form input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--border-base, #e4e4e7);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-main, #18181b);
+  padding: 0 10px;
+  outline: none;
+  font-size: 13px;
+  appearance: none;
+}
+.public-room-chat-form input:focus {
+  border-color: var(--accent-main, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.public-room-chat-form button {
+  width: 56px;
+  height: 36px;
+  border: 1px solid #1d4ed8;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.public-room-chat-form button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.public-room-chat-error {
+  padding: 0 10px 10px;
+  color: var(--danger-main);
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 
 /* Messages */
 .messages-container { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 24px 0 160px; display: flex; flex-direction: column; scroll-behavior: smooth; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.72) rgba(226, 232, 240, 0.55); }
@@ -2820,6 +3805,52 @@ export default {
   .messages-container {
     padding: 12px 0 138px;
     scrollbar-gutter: auto;
+  }
+
+  .public-room-bar {
+    width: calc(100% - 20px);
+    margin-bottom: 10px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .public-room-typing {
+    width: 100%;
+  }
+
+  .public-room-link-btn {
+    width: 100%;
+  }
+
+  .public-room-player-chat {
+    right: 14px;
+    bottom: calc(82px + env(safe-area-inset-bottom));
+    width: auto;
+    max-width: calc(100vw - 28px);
+  }
+
+  .public-room-player-chat:not(.collapsed) {
+    left: 10px !important;
+    right: 10px !important;
+    bottom: calc(74px + env(safe-area-inset-bottom)) !important;
+    width: auto;
+  }
+
+  .public-room-chat-fab {
+    min-width: 72px;
+    height: 40px;
+    padding: 0 14px;
+  }
+
+  .public-room-chat-panel {
+    width: 100%;
+    height: min(52vh, 420px);
+    border-radius: 12px 12px 0 0;
+  }
+
+  .public-room-chat-header {
+    cursor: default;
   }
 
   .messages-container::-webkit-scrollbar {
