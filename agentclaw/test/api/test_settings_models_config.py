@@ -224,3 +224,67 @@ def test_settings_models_config_preserves_audio_defaults(tmp_path):
     assert updated["speech2text"] == "asr"
     assert updated["tts"] == "voice"
     assert updated["tts_voice"] == "alloy"
+
+
+def test_settings_models_config_preserves_safety_guard_model_and_rules_only(tmp_path):
+    models_path = tmp_path / "models.json"
+    models_path.write_text(
+        json.dumps(
+            {
+                "safe_guard_prompt": "legacy custom prompt",
+                "safe_guard_apply_api": True,
+                "safe_guard_apply_public": False,
+                "models": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service, manager = _service(tmp_path)
+
+    updated = service.update_models_config(
+            {
+                "default": "chat",
+                "safe_guard": "guard",
+                "safe_guard_apply_api": True,
+                "safe_guard_apply_public": False,
+            "safe_guard_rules": "block unsafe content",
+            "models": [
+                {"id": "chat", "channel": "openai", "type": "chat", "model": "gpt"},
+                {"id": "guard", "channel": "openai", "type": "chat", "model": "guard-model"},
+            ],
+        }
+    )
+
+    raw = json.loads(models_path.read_text(encoding="utf-8"))
+    assert raw["safe_guard"] == "guard"
+    assert raw["safe_guard_rules"] == "block unsafe content"
+    assert "safe_guard_prompt" not in raw
+    assert "safe_guard_apply_api" not in raw
+    assert "safe_guard_apply_public" not in raw
+    assert updated["safe_guard"] == "guard"
+    assert updated["safe_guard_rules"] == "block unsafe content"
+    assert "safe_guard_prompt" not in updated
+    assert "safe_guard_apply_api" not in updated
+    assert "safe_guard_apply_public" not in updated
+    assert manager.reloaded_paths == [str(models_path)]
+
+
+def test_settings_models_config_rejects_embedding_as_safety_guard(tmp_path):
+    (tmp_path / "models.json").write_text(json.dumps({"models": []}), encoding="utf-8")
+    service, _ = _service(tmp_path)
+
+    try:
+        service.update_models_config(
+            {
+                "default": "chat",
+                "safe_guard": "embedding",
+                "models": [
+                    {"id": "chat", "type": "chat", "model": "gpt"},
+                    {"id": "embedding", "type": "embedding", "model": "text-embedding-3-large"},
+                ],
+            }
+        )
+    except ValueError as exc:
+        assert "safe_guard" in str(exc)
+    else:
+        raise AssertionError("embedding safe_guard model should be rejected")

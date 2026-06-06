@@ -45,7 +45,9 @@ def test_visible_env_var_names_include_public_security_limits():
     assert "AGENTCLAW_ENABLE_API_DOCS" in names
     assert "AGENTCLAW_PUBLIC_AUDIO_ALLOWED_MIME_TYPES" in names
     assert "AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT" in names
+    assert "AGENTCLAW_PUBLIC_ROOM_CHAT_COOLDOWN_SECONDS" in names
     assert "AGENTCLAW_PUBLIC_COOKIE_SECURE" in names
+    assert "AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH" in names
     assert "AGENTCLAW_PUBLIC_MAX_INPUT_BYTES" in names
     assert "AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH" in names
     assert "AGENTCLAW_PUBLIC_TOOL_POLICY" in names

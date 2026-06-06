@@ -257,6 +257,12 @@
               <n-form-item :label="t('settings.modelConfig.ttsVoice')">
                 <n-input v-model:value="modelsConfigForm.tts_voice" :placeholder="t('settings.modelConfig.ttsVoicePlaceholder')" class="form-input-wide" @input="markModelsConfigChanged" />
               </n-form-item>
+              <n-form-item :label="t('settings.modelConfig.safeGuardModel')">
+                <n-select v-model:value="modelsConfigForm.safe_guard" :options="modelSelectOptions" :placeholder="t('common.none')" clearable filterable class="form-input-wide" @update:value="markModelsConfigChanged" />
+              </n-form-item>
+              <n-form-item :label="t('settings.modelConfig.safeGuardRules')">
+                <n-input v-model:value="modelsConfigForm.safe_guard_rules" type="textarea" :rows="4" :placeholder="t('settings.modelConfig.safeGuardRulesPlaceholder')" class="form-input-wide" @input="markModelsConfigChanged" />
+              </n-form-item>
             </n-form>
           </n-card>
 
@@ -426,6 +432,22 @@
                 <n-form-item :label="t('settingsForm.workflow.allowedRoles')">
                   <n-input v-model:value="workflowForm.allowed_roles" :placeholder="t('settingsForm.workflow.allowedRolesPlaceholder')" class="form-input-wide" disabled />
                   <n-text depth="3" class="form-hint">{{ t('settingsForm.workflow.reservedRolesHint') }}</n-text>
+                </n-form-item>
+                <n-form-item :label="t('workflowConfig.workflow.apiPublished')">
+                  <n-switch v-model:value="workflowForm.api_published" @update:value="workflowChanged = true" />
+                  <n-text depth="3" class="form-hint">{{ t('workflowConfig.workflow.apiPublishedHint') }}</n-text>
+                </n-form-item>
+                <n-form-item :label="t('workflowConfig.workflow.workflowApiKey')">
+                  <n-input v-model:value="workflowForm.workflow_api_key" type="password" show-password-on="click" class="form-input-wide" @input="workflowChanged = true" />
+                  <n-text depth="3" class="form-hint">{{ t('workflowConfig.workflow.workflowApiKeyHint') }}</n-text>
+                </n-form-item>
+                <n-form-item :label="t('workflowConfig.workflow.safeGuardApplyApi')">
+                  <n-switch v-model:value="workflowForm.safe_guard_apply_api" :disabled="!workflowForm.safe_guard_configured" @update:value="workflowChanged = true" />
+                  <n-text depth="3" class="form-hint">{{ t('workflowConfig.workflow.safeGuardApplyApiHint') }}</n-text>
+                </n-form-item>
+                <n-form-item :label="t('workflowConfig.workflow.safeGuardApplyPublic')">
+                  <n-switch v-model:value="workflowForm.safe_guard_apply_public" :disabled="!workflowForm.safe_guard_configured" @update:value="workflowChanged = true" />
+                  <n-text depth="3" class="form-hint">{{ t('workflowConfig.workflow.safeGuardApplyPublicHint') }}</n-text>
                 </n-form-item>
                 <n-form-item :label="t('settingsForm.workflow.rateLimit')">
                   <n-input v-model:value="workflowForm.rate_limit" :placeholder="t('settingsForm.workflow.rateLimitPlaceholder')" class="form-input" @input="workflowChanged = true" />
@@ -719,6 +741,7 @@ const message = useMessage()
 const { t, tm } = useI18n()
 const activeTab = ref('global')
 const showScopedConfig = false
+const SECRET_MASK = '***'
 
 // ============================================================
 // Mock data defaults
@@ -870,7 +893,7 @@ async function saveMaintenanceConfig() {
 
 function normalizeEnvValue(variable) {
   if (!variable) return ''
-  if (variable.secret) return variable.value ?? ''
+  if (variable.secret) return variable.value === SECRET_MASK ? '' : (variable.value ?? '')
   if (variable.type === 'boolean') return Boolean(variable.value)
   if (variable.type === 'number') {
     const number = Number(variable.value)
@@ -1015,10 +1038,12 @@ const MODEL_CONFIG_DEFAULTS = {
   speech2text: '',
   tts: '',
   tts_voice: '',
+  safe_guard: '',
+  safe_guard_rules: '',
   models: [],
 }
-const MODEL_SECRET_MASK = '***'
-const MODEL_REFERENCE_FIELDS = ['default', 'fallback', 'fast', 'vision', 'speech2text', 'tts']
+const MODEL_SECRET_MASK = SECRET_MASK
+const MODEL_REFERENCE_FIELDS = ['default', 'fallback', 'fast', 'vision', 'speech2text', 'tts', 'safe_guard']
 const MODEL_TYPES_WITHOUT_CHANNEL = new Set(['embedding', 'rerank'])
 const CHAT_MODEL_CHANNEL_OPTIONS = [
   { label: 'openai', value: 'openai' },
@@ -1177,6 +1202,8 @@ function normalizeModelsConfig(config = {}) {
     speech2text: config.speech2text || '',
     tts: config.tts || '',
     tts_voice: config.tts_voice || '',
+    safe_guard: config.safe_guard || '',
+    safe_guard_rules: config.safe_guard_rules || '',
     models: (config.models || []).map(cloneModelConfig),
   }
 }
@@ -1210,6 +1237,8 @@ function serializeModelsConfig() {
     speech2text: modelsConfigForm.value.speech2text || '',
     tts: modelsConfigForm.value.tts || '',
     tts_voice: modelsConfigForm.value.tts_voice || '',
+    safe_guard: modelsConfigForm.value.safe_guard || '',
+    safe_guard_rules: modelsConfigForm.value.safe_guard_rules || '',
     models: modelsConfigForm.value.models.map(serializeModelConfig),
   }
 }
@@ -1390,6 +1419,16 @@ const workflowConfig = ref(null)
 const workflowForm = ref({})
 const workflowChanged = ref(false)
 
+function normalizeWorkflowSafetyGuardForm(config = {}) {
+  const safeGuardConfigured = !!config.safe_guard_configured
+  return {
+    ...config,
+    safe_guard_configured: safeGuardConfigured,
+    safe_guard_apply_api: safeGuardConfigured && !!config.safe_guard_apply_api,
+    safe_guard_apply_public: safeGuardConfigured && config.safe_guard_apply_public !== false,
+  }
+}
+
 const workflowOptions = computed(() =>
   workflows.value.map(wf => ({ label: `${wf.name || wf.id} (${wf.id})`, value: wf.id }))
 )
@@ -1414,7 +1453,7 @@ async function onWorkflowSelect(workflowId) {
     workflowConfig.value = workflow
     try {
       const cfg = await withReadinessRetry(() => settingsApi.getWorkflow(workflowId))
-      workflowForm.value = { ...cfg }
+      workflowForm.value = normalizeWorkflowSafetyGuardForm(cfg)
     } catch {
       workflowForm.value = {
         timeout: workflow.timeout ?? 300,
@@ -1423,17 +1462,22 @@ async function onWorkflowSelect(workflowId) {
         tracing: workflow.tracing ?? true,
         auth_required: workflow.auth_required ?? false,
         allowed_roles: Array.isArray(workflow.allowed_roles) ? workflow.allowed_roles.join(', ') : (workflow.allowed_roles || ''),
+        api_published: workflow.api_published !== false,
+        workflow_api_key: '',
+        workflow_api_key_set: !!workflow.workflow_api_key_set,
+        safe_guard_configured: !!workflow.safe_guard_configured,
+        safe_guard_apply_api: !!workflow.safe_guard_apply_api,
+        safe_guard_apply_public: workflow.safe_guard_apply_public !== false,
         rate_limit: workflow.rate_limit || '',
         public_share_enabled: !!workflow.public_share_enabled,
         public_share_token: workflow.public_share_token || '',
         publish_to_square: !!workflow.publish_to_square,
-        workflow_api_key: '',
-        workflow_api_key_set: !!workflow.workflow_api_key_set,
         public_conversation_limit: workflow.public_conversation_limit || 20,
         public_message_limit: workflow.public_message_limit || 200,
         description: workflow.description || '',
         welcome: workflow.welcome || '',
       }
+      workflowForm.value = normalizeWorkflowSafetyGuardForm(workflowForm.value)
     }
     workflowChanged.value = false
   } catch (e) {
@@ -1444,7 +1488,7 @@ async function onWorkflowSelect(workflowId) {
 async function saveWorkflowConfig() {
   try {
     const res = await settingsApi.updateWorkflow(selectedWorkflowId.value, workflowForm.value)
-    workflowForm.value = { ...res }
+    workflowForm.value = normalizeWorkflowSafetyGuardForm(res)
     workflowChanged.value = false
     message.success(t('settingsForm.messages.workflowSaved'))
   } catch {

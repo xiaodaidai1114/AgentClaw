@@ -47,7 +47,10 @@ Workflow(
     rate_limit: str = None,           # Public Agent 匿名访问限流，如 "10/min"
     public_share_enabled: bool = False,   # 是否开启匿名公开发布，默认关闭
     public_share_token: str = None,       # 公开分享 token，开启公开发布时自动生成
+    api_published: bool = True,           # 是否接受当前工作流 API Key 调用 /api/workflow/run
     workflow_api_key: str = None,         # 当前工作流独立执行密钥
+    safe_guard_apply_api: bool = False,   # 是否在 API 调用前检查用户输入
+    safe_guard_apply_public: bool = True, # 是否在公开智能体/公开房间中检查用户输入
     public_conversation_limit: int = 20,  # Public Agent 每客户端会话数配额
     public_message_limit: int = 200,      # Public Agent 单会话消息数配额
     inject_as_agentic_capability: bool = True,  # 是否注入内置智能体能力目录
@@ -810,7 +813,7 @@ server.run()
 需要 `Authorization: Bearer <key>`。可用密钥包括：
 
 - 全局 `WORKFLOW_API_KEY`
-- 工作流配置中的 `workflow_api_key`，只允许执行该工作流
+- 工作流配置中的 `workflow_api_key`，只允许执行该工作流，且只有该工作流开启 **发布 API** 后才可用
 - `ADMIN_TOKEN`
 
 Workflow API Key 不等同于 Admin Token，不能访问调度器、渠道推送、文件列表、Dashboard 管理、危险操作确认等管理能力。

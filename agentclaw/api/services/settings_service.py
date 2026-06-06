@@ -28,7 +28,10 @@ WORKFLOW_FIELDS = (
     "public_share_enabled",
     "public_share_token",
     "publish_to_square",
+    "api_published",
     "workflow_api_key",
+    "safe_guard_apply_api",
+    "safe_guard_apply_public",
     "public_conversation_limit",
     "public_message_limit",
     "inject_as_agentic_capability",
@@ -46,7 +49,10 @@ INFRA_FIELDS = {
 }
 MAINTENANCE_FIELDS = ("log_retention_days", "checkpointer_retention_days")
 SECRET_MASKS = {"password", "admin_token", "workflow_api_key", "mcp_token", "minio_access_key", "minio_secret_key"}
-MODEL_REFERENCE_FIELDS = ("default", "fallback", "fast", "vision", "speech2text", "tts", "tts_voice")
+MODEL_REFERENCE_FIELDS = ("default", "fallback", "fast", "vision", "speech2text", "tts", "tts_voice", "safe_guard")
+MODEL_TEXT_FIELDS = ("safe_guard_rules",)
+MODEL_BOOL_FIELDS = {}
+MODEL_DROPPED_FIELDS = ("safe_guard_prompt", "safe_guard_apply_api", "safe_guard_apply_public")
 DEFAULT_CHAT_AUDIO_CONFIG = {
     "enabled": False,
     "speech_input_enabled": False,
@@ -65,6 +71,9 @@ FALSEABLE_OVERRIDE_FIELDS = {
     "inject_as_agentic_capability",
     "public_share_enabled",
     "publish_to_square",
+    "api_published",
+    "safe_guard_apply_api",
+    "safe_guard_apply_public",
     "enabled",
     "speech_input_enabled",
     "tts_enabled",
@@ -131,6 +140,7 @@ RESTART_ENV_NAMES = {
     "AGENTCLAW_MAX_REQUEST_BODY_BYTES",
     "AGENTCLAW_CONTENT_SECURITY_POLICY",
     "AGENTCLAW_PUBLIC_SESSION_SECRET",
+    "AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH",
     "AGENTCLAW_DATA_DIR",
     "AGENTCLAW_DOCKER_STORAGE_TYPE",
     "AGENTCLAW_DOCKER_PGDATA_DIR",
@@ -289,6 +299,19 @@ def _coerce_env_setting_value(name: str, value: str) -> Any:
             return value
         return int(number) if number.is_integer() else number
     return value
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+        return default
+    return bool(value)
 
 
 def _sync_legacy_settings(project_dir: Path, updates: dict[str, str]) -> None:
@@ -495,6 +518,10 @@ def _workflow_settings_path(store: Path, workflow_id: str) -> Path:
     return store / f"{workflow_id.replace('/', '_').replace(chr(92), '_')}_settings.json"
 
 
+def _generate_workflow_api_key() -> str:
+    return f"wf-{secrets.token_urlsafe(32)}"
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -562,7 +589,12 @@ def _models_config_path(config: Any) -> Path:
 def _load_models_config(path: Path) -> dict[str, Any]:
     payload = _load_json(path)
     if not payload:
-        return {**{field: "" for field in MODEL_REFERENCE_FIELDS}, "models": []}
+        return {
+            **{field: "" for field in MODEL_REFERENCE_FIELDS},
+            **{field: "" for field in MODEL_TEXT_FIELDS},
+            **MODEL_BOOL_FIELDS,
+            "models": [],
+        }
     models = payload.get("models", [])
     if isinstance(models, dict):
         models = [
@@ -572,14 +604,47 @@ def _load_models_config(path: Path) -> dict[str, Any]:
     elif not isinstance(models, list):
         models = []
     payload = dict(payload)
+    for field in MODEL_DROPPED_FIELDS:
+        payload.pop(field, None)
     payload["models"] = [dict(item) for item in models if isinstance(item, dict)]
     for field in MODEL_REFERENCE_FIELDS:
         payload.setdefault(field, "")
+    for field in MODEL_TEXT_FIELDS:
+        payload.setdefault(field, "")
+    for field, default in MODEL_BOOL_FIELDS.items():
+        payload[field] = _coerce_bool(payload.get(field), default)
     return payload
+
+
+def _safe_guard_model_configured(payload: dict[str, Any]) -> bool:
+    safe_guard_id = str(payload.get("safe_guard") or "").strip()
+    if not safe_guard_id:
+        return False
+    for item in payload.get("models", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip() != safe_guard_id:
+            continue
+        model_type = str(item.get("type") or item.get("model_type") or "chat").strip().lower()
+        model_name = str(item.get("model") or "").strip()
+        return bool(model_name) and model_type not in NON_CONVERSATION_MODEL_TYPES
+    return False
+
+
+def _safe_guard_configured_from_path(path: Path) -> bool:
+    return _safe_guard_model_configured(_load_models_config(path))
+
+
+def _safe_guard_configured(config: Any) -> bool:
+    return _safe_guard_configured_from_path(_models_config_path(config))
 
 
 def _mask_models_config(payload: dict[str, Any], path: Path) -> dict[str, Any]:
     result = {key: payload.get(key, "") for key in MODEL_REFERENCE_FIELDS}
+    for field in MODEL_TEXT_FIELDS:
+        result[field] = payload.get(field, "")
+    for field, default in MODEL_BOOL_FIELDS.items():
+        result[field] = _coerce_bool(payload.get(field), default)
     result["path"] = str(path)
     result["models"] = []
     for item in payload.get("models", []):
@@ -622,12 +687,18 @@ def _sanitize_models_config(data: dict[str, Any], existing: dict[str, Any]) -> d
     payload = {
         key: value
         for key, value in existing.items()
-        if key not in {*MODEL_REFERENCE_FIELDS, "models", "path", "hot_reloaded"}
+        if key not in {*MODEL_REFERENCE_FIELDS, *MODEL_TEXT_FIELDS, *MODEL_BOOL_FIELDS, *MODEL_DROPPED_FIELDS, "models", "path", "hot_reloaded"}
     }
     for field in MODEL_REFERENCE_FIELDS:
         value = data.get(field, "")
         if value is not None:
             payload[field] = str(value).strip()
+    for field in MODEL_TEXT_FIELDS:
+        value = data.get(field, "")
+        if value is not None:
+            payload[field] = str(value)
+    for field, default in MODEL_BOOL_FIELDS.items():
+        payload[field] = _coerce_bool(data.get(field), default)
     raw_models = data.get("models", [])
     if not isinstance(raw_models, list):
         raise ValueError("models must be a list")
@@ -668,6 +739,9 @@ def _sanitize_models_config(data: dict[str, Any], existing: dict[str, Any]) -> d
     tts_id = str(payload.get("tts") or "")
     if tts_id and model_types.get(tts_id) != "tts":
         raise ValueError(f"tts model must select a tts model: '{tts_id}'")
+    safe_guard_id = str(payload.get("safe_guard") or "")
+    if safe_guard_id and model_types.get(safe_guard_id) in NON_CONVERSATION_MODEL_TYPES:
+        raise ValueError(f"safe_guard model cannot use non-conversation model '{safe_guard_id}'")
     return payload
 
 
@@ -747,7 +821,10 @@ def _workflow_base(workflow: Any) -> dict[str, Any]:
     base["public_share_enabled"] = bool(base.get("public_share_enabled"))
     base["public_share_token"] = base.get("public_share_token") or ""
     base["publish_to_square"] = bool(base.get("publish_to_square")) and base["public_share_enabled"] and bool(base["public_share_token"])
+    base["api_published"] = base.get("api_published") is not False
     base["workflow_api_key"] = base.get("workflow_api_key") or ""
+    base["safe_guard_apply_api"] = bool(base.get("safe_guard_apply_api"))
+    base["safe_guard_apply_public"] = base.get("safe_guard_apply_public") is not False
     base["public_conversation_limit"] = base.get("public_conversation_limit") or 20
     base["public_message_limit"] = base.get("public_message_limit") or 200
     base["inject_as_agentic_capability"] = base.get("inject_as_agentic_capability") is not False
@@ -758,7 +835,7 @@ def _workflow_display(base: dict[str, Any]) -> dict[str, Any]:
     display = dict(base)
     workflow_api_key = str(display.get("workflow_api_key") or "")
     display["workflow_api_key_set"] = bool(workflow_api_key)
-    display["workflow_api_key"] = WORKFLOW_SECRET_MASK if workflow_api_key else ""
+    display["workflow_api_key"] = workflow_api_key
     display["auth_reserved_notice"] = "auth_required and allowed_roles are reserved fields and do not affect current personal edition authorization."
     return display
 
@@ -784,6 +861,47 @@ def _clear_public_share_fields(payload: dict[str, Any]) -> None:
     payload["public_share_enabled"] = False
     payload["public_share_token"] = ""
     payload["publish_to_square"] = False
+    payload["api_published"] = False
+
+
+def _ensure_workflow_api_defaults(workflow: Any, store: Path, safe_guard_configured: bool | None = None) -> None:
+    if _is_builtin_workflow(workflow):
+        return
+    if safe_guard_configured is None:
+        safe_guard_configured = _safe_guard_configured_from_path(store.parent / "models.json")
+    changed = False
+    settings_path = _workflow_settings_path(store, workflow.id)
+    payload = _load_json(settings_path)
+    workflow_payload = payload.get("workflow", {})
+    if not isinstance(workflow_payload, dict):
+        workflow_payload = {}
+    if not hasattr(workflow, "api_published"):
+        setattr(workflow, "api_published", True)
+    if "api_published" not in workflow_payload:
+        workflow_payload["api_published"] = getattr(workflow, "api_published", True) is not False
+        changed = True
+    if "safe_guard_apply_api" not in workflow_payload:
+        workflow_payload["safe_guard_apply_api"] = bool(getattr(workflow, "safe_guard_apply_api", False))
+        changed = True
+    if "safe_guard_apply_public" not in workflow_payload:
+        workflow_payload["safe_guard_apply_public"] = getattr(workflow, "safe_guard_apply_public", True) is not False
+        changed = True
+    if not safe_guard_configured:
+        if workflow_payload.get("safe_guard_apply_api") is not False:
+            workflow_payload["safe_guard_apply_api"] = False
+            changed = True
+        if workflow_payload.get("safe_guard_apply_public") is not False:
+            workflow_payload["safe_guard_apply_public"] = False
+            changed = True
+    workflow_key = str(getattr(workflow, "workflow_api_key", "") or "").strip()
+    if not workflow_key:
+        workflow_key = _generate_workflow_api_key()
+        setattr(workflow, "workflow_api_key", workflow_key)
+        workflow_payload["workflow_api_key"] = workflow_key
+        changed = True
+    if changed:
+        payload["workflow"] = workflow_payload
+        _save_json(settings_path, _prune(payload))
 
 
 def _node_base(node: Any) -> dict[str, Any]:
@@ -855,9 +973,14 @@ def apply_saved_system_settings(config: Any) -> None:
             setattr(config.maintenance, key, normalize_retention_days(maintenance_override.get(key), 0))
 
 
-def apply_saved_workflow_settings(workflow: Any, project_dir: Path | None = None) -> None:
+def apply_saved_workflow_settings(
+    workflow: Any,
+    project_dir: Path | None = None,
+    safe_guard_configured: bool | None = None,
+) -> None:
     project_dir = project_dir or workflow._candidate_base_dirs()[0]
     store = _store_dir(project_dir)
+    _ensure_workflow_api_defaults(workflow, store, safe_guard_configured=safe_guard_configured)
     config = _load_json(_workflow_settings_path(store, workflow.id))
     if not hasattr(workflow, "_settings_base_workflow"):
         workflow._settings_base_workflow = _workflow_base(workflow)
@@ -1067,13 +1190,24 @@ class SettingsService:
         workflow = self._registry.get(workflow_id) if self._registry else None
         if not workflow:
             raise KeyError(workflow_id)
-        apply_saved_workflow_settings(workflow, self._config.project.project_dir)
-        return _workflow_with_memory(workflow, self._config.project.project_dir)
+        safe_guard_configured = _safe_guard_configured(self._config)
+        apply_saved_workflow_settings(
+            workflow,
+            self._config.project.project_dir,
+            safe_guard_configured=safe_guard_configured,
+        )
+        result = _workflow_with_memory(workflow, self._config.project.project_dir)
+        result["safe_guard_configured"] = safe_guard_configured
+        if not safe_guard_configured:
+            result["safe_guard_apply_api"] = False
+            result["safe_guard_apply_public"] = False
+        return result
 
     def update_workflow(self, workflow_id: str, data: dict[str, Any]) -> dict[str, Any]:
         workflow = self._registry.get(workflow_id) if self._registry else None
         if not workflow:
             raise KeyError(workflow_id)
+        safe_guard_configured = _safe_guard_configured(self._config)
         settings_path = _workflow_settings_path(self._store, workflow_id)
         payload = _load_json(settings_path)
         data = dict(data or {})
@@ -1092,6 +1226,15 @@ class SettingsService:
             data["chat_audio"] = _normalize_chat_audio(data.get("chat_audio"))
         if "allowed_roles" in data and isinstance(data["allowed_roles"], str):
             data["allowed_roles"] = [item.strip() for item in data["allowed_roles"].split(",") if item.strip()]
+        if "api_published" in data:
+            data["api_published"] = bool(data.get("api_published"))
+        if "safe_guard_apply_api" in data:
+            data["safe_guard_apply_api"] = bool(data.get("safe_guard_apply_api"))
+        if "safe_guard_apply_public" in data:
+            data["safe_guard_apply_public"] = bool(data.get("safe_guard_apply_public"))
+        if not safe_guard_configured:
+            data["safe_guard_apply_api"] = False
+            data["safe_guard_apply_public"] = False
         if _is_builtin_workflow(workflow, workflow_id):
             _clear_public_share_fields(data)
         if data.get("public_share_enabled") and not str(data.get("public_share_token") or "").strip():
@@ -1109,8 +1252,19 @@ class SettingsService:
                     value = fallback
                 data[numeric_field] = value if value > 0 else fallback
         workflow_payload = _prune(data)
+        if "api_published" not in workflow_payload:
+            workflow_payload["api_published"] = getattr(workflow, "api_published", True) is not False
+        if "safe_guard_apply_api" not in workflow_payload:
+            workflow_payload["safe_guard_apply_api"] = bool(getattr(workflow, "safe_guard_apply_api", False))
+        if "safe_guard_apply_public" not in workflow_payload:
+            workflow_payload["safe_guard_apply_public"] = getattr(workflow, "safe_guard_apply_public", True) is not False
+        if not safe_guard_configured:
+            workflow_payload["safe_guard_apply_api"] = False
+            workflow_payload["safe_guard_apply_public"] = False
         if existing_workflow_key and "workflow_api_key" not in workflow_payload:
             workflow_payload["workflow_api_key"] = existing_workflow_key
+        elif "workflow_api_key" not in workflow_payload:
+            workflow_payload["workflow_api_key"] = _generate_workflow_api_key()
         payload["workflow"] = workflow_payload
         _save_json(settings_path, _prune(payload))
         return self.get_workflow(workflow_id)
@@ -1141,7 +1295,11 @@ class SettingsService:
         node = getattr(workflow, "_nodes", {}).get(node_id) if workflow else None
         if not node:
             raise KeyError(f"{workflow_id}:{node_id}")
-        apply_saved_workflow_settings(workflow, self._config.project.project_dir)
+        apply_saved_workflow_settings(
+            workflow,
+            self._config.project.project_dir,
+            safe_guard_configured=_safe_guard_configured(self._config),
+        )
         return _node_base(node)
 
     def update_node(self, workflow_id: str, node_id: str, data: dict[str, Any]) -> dict[str, Any]:

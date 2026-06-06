@@ -142,7 +142,10 @@ class Workflow:
         public_share_enabled: bool = False,
         public_share_token: Optional[str] = None,
         publish_to_square: bool = False,
+        api_published: bool = True,
         workflow_api_key: Optional[str] = None,
+        safe_guard_apply_api: bool = False,
+        safe_guard_apply_public: bool = True,
         public_conversation_limit: int = 20,
         public_message_limit: int = 200,
         inject_as_agentic_capability: bool = True,
@@ -175,7 +178,10 @@ class Workflow:
         self.public_share_enabled = bool(public_share_enabled)
         self.public_share_token = public_share_token
         self.publish_to_square = bool(publish_to_square)
+        self.api_published = bool(api_published)
         self.workflow_api_key = workflow_api_key
+        self.safe_guard_apply_api = bool(safe_guard_apply_api)
+        self.safe_guard_apply_public = bool(safe_guard_apply_public)
         self.public_conversation_limit = public_conversation_limit
         self.public_message_limit = public_message_limit
         self.inject_as_agentic_capability = bool(inject_as_agentic_capability)
@@ -3072,6 +3078,9 @@ class Workflow:
             "public_share_enabled": False if is_builtin_workflow else bool(getattr(self, "public_share_enabled", False)),
             "public_share_token": "" if is_builtin_workflow else (getattr(self, "public_share_token", "") or ""),
             "publish_to_square": False if is_builtin_workflow else bool(getattr(self, "publish_to_square", False)),
+            "api_published": False if is_builtin_workflow else getattr(self, "api_published", True) is not False,
+            "safe_guard_apply_api": bool(getattr(self, "safe_guard_apply_api", False)),
+            "safe_guard_apply_public": getattr(self, "safe_guard_apply_public", True) is not False,
             "rate_limit": getattr(self, "rate_limit", "") or "",
             "public_conversation_limit": getattr(self, "public_conversation_limit", 20) or 20,
             "public_message_limit": getattr(self, "public_message_limit", 200) or 200,

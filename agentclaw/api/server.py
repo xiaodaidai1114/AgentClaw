@@ -1706,6 +1706,7 @@ class AgentClawServer:
         
         current_log_file = get_current_log_file() or str(self.log_file)
         logger.info(f"启动服务器: http://{self.host}:{self.port}")
+        logger.info(f"日志文件: {current_log_file}")
         print(f"INFO | agentclaw.api.server | 启动服务器: http://{self.host}:{self.port}", flush=True)
         print(f"INFO | agentclaw.api.server | 日志文件: {current_log_file}", flush=True)
         

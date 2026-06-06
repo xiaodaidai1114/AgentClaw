@@ -55,6 +55,20 @@ def _open_public_session_client(public_api_client, workflow_id: str):
     return public_api_client
 
 
+class FakeSafetyGuardManager:
+    safe_guard_id = "guard"
+    safe_guard_prompt = "This custom prompt must be ignored"
+    safe_guard_rules = "block unsafe content"
+
+    def __init__(self, decision: str):
+        self.decision = decision
+        self.calls: list[tuple[list[dict], dict]] = []
+
+    async def invoke(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        return self.decision
+
+
 def test_workflow_run_rejects_invalid_json_after_auth(public_api_client, auth_tokens):
     response = public_api_client.post(
         "/api/workflow/run",
@@ -128,6 +142,73 @@ def test_workflow_run_accepts_workflow_specific_api_key(
 
     assert response.status_code == 200
     assert response.json()["answer"] == "hello"
+
+
+def test_workflow_specific_api_key_requires_api_published(
+    public_api_client,
+    monkeypatch,
+    auth_tokens,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    run_calls = 0
+
+    class FakeWorkflow:
+        id = "wf-api-disabled"
+        _input_schema = None
+        api_published = False
+        workflow_api_key = "wf-local-key"
+
+        def get_user_input_field(self):
+            return "prompt"
+
+        async def run(self, *, inputs, context, thread_id):
+            nonlocal run_calls
+            run_calls += 1
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["prompt"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    workflow = FakeWorkflow()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-api-disabled" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    workflow_key_response = public_api_client.post(
+        "/api/workflow/run",
+        headers=auth_header("wf-local-key"),
+        json={
+            "workflow_id": "wf-api-disabled",
+            "response_mode": "blocking",
+            "user": "hello",
+        },
+    )
+    global_key_response = public_api_client.post(
+        "/api/workflow/run",
+        headers=auth_header(auth_tokens.workflow),
+        json={
+            "workflow_id": "wf-api-disabled",
+            "response_mode": "blocking",
+            "user": "hello",
+        },
+    )
+
+    assert workflow_key_response.status_code == 401
+    assert workflow_key_response.json()["code"] == "unauthorized"
+    assert global_key_response.status_code == 200
+    assert global_key_response.json()["answer"] == "hello"
+    assert run_calls == 1
 
 
 def test_workflow_specific_api_key_does_not_grant_catalog_access(public_api_client):
@@ -254,6 +335,70 @@ def test_workflow_run_blocking_mode_normalizes_user_and_returns_answer(
         "prompt": "hello",
         "__files__": [{"id": "file-1"}],
     }
+
+
+def test_workflow_run_safety_guard_is_api_scoped(
+    public_api_client,
+    monkeypatch,
+    auth_tokens,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    guard_manager = FakeSafetyGuardManager("Answer: 1")
+    run_calls = 0
+
+    class FakeWorkflow:
+        id = "wf-api-guard"
+        _input_schema = None
+        _llm_manager = guard_manager
+        safe_guard_apply_api = False
+
+        def get_user_input_field(self):
+            return "prompt"
+
+        async def run(self, *, inputs, context, thread_id):
+            nonlocal run_calls
+            run_calls += 1
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["prompt"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    workflow = FakeWorkflow()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-api-guard" else None),
+    )
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    default_response = public_api_client.post(
+        "/api/workflow/run",
+        headers=auth_header(auth_tokens.workflow),
+        json={"workflow_id": "wf-api-guard", "response_mode": "blocking", "user": "unsafe"},
+    )
+    assert default_response.status_code == 200
+    assert default_response.json()["answer"] == "unsafe"
+    assert run_calls == 1
+    assert guard_manager.calls == []
+
+    workflow.safe_guard_apply_api = True
+    blocked_response = public_api_client.post(
+        "/api/workflow/run",
+        headers=auth_header(auth_tokens.workflow),
+        json={"workflow_id": "wf-api-guard", "response_mode": "blocking", "user": "unsafe"},
+    )
+    assert blocked_response.status_code == 403
+    assert blocked_response.json()["code"] == "SAFETY_GUARD_BLOCKED"
+    assert run_calls == 1
+    assert len(guard_manager.calls) == 1
 
 
 def test_authenticated_builtin_workflow_run_remains_allowed_after_public_share_block(
@@ -385,6 +530,191 @@ def test_anonymous_public_workflow_run_uses_path_workflow_without_auth(
     assert captured["public_mode"] is True
     assert captured["disable_confirm_tool"] is True
     assert captured["tool_confirmation_level"] == "off"
+
+
+def test_anonymous_public_workflow_run_blocks_safety_guard_violation(
+    public_api_client,
+    monkeypatch,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+
+    guard_manager = FakeSafetyGuardManager("Reasoning mentions example 0 before the final decision.\nAnswer: 1")
+    run_calls = 0
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+        _llm_manager = guard_manager
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            nonlocal run_calls
+            run_calls += 1
+            return {"state": {"__messages__": []}, "metadata": {}}
+
+    workflow = FakeWorkflow()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-public" else None),
+    )
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run",
+        headers={**_public_page_headers(), "x-agentclaw-share-token": "share-test"},
+        json={
+            "response_mode": "blocking",
+            "user": "unsafe request",
+            "inputs": {"question": "unsafe request", "system_prompt": "internal system prompt"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "SAFETY_GUARD_BLOCKED"
+    assert run_calls == 0
+    assert len(guard_manager.calls) == 1
+    messages, kwargs = guard_manager.calls[0]
+    assert "This custom prompt must be ignored" not in messages[0]["content"]
+    assert "## EXTRA RULES\nblock unsafe content" in messages[0]["content"]
+    assert "Content: unsafe request" in messages[0]["content"]
+    assert "internal system prompt" not in messages[0]["content"]
+    assert messages[0]["content"].endswith("Answer (0 or 1):")
+    assert kwargs["model_id"] == "guard"
+    assert kwargs["_call_type"] == "safe_guard"
+    assert kwargs["_max_attempts"] == 1
+    assert kwargs["temperature"] == 0
+    assert "max_tokens" not in kwargs
+
+
+def test_anonymous_public_workflow_run_masks_sensitive_words_before_guard(
+    public_api_client,
+    monkeypatch,
+    tmp_path,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+    from agentclaw.api.services.public_sensitive_words_service import reset_public_sensitive_words_cache
+    from agentclaw.config import AgentClawConfig, ProjectConfig
+
+    words_path = tmp_path / "sensitive.txt"
+    words_path.write_text("炸药 secret", encoding="utf-8")
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH", str(words_path))
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    reset_public_sensitive_words_cache()
+
+    guard_manager = FakeSafetyGuardManager("Answer: 0")
+    captured = {}
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+        _llm_manager = guard_manager
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            captured["inputs"] = inputs
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    workflow = FakeWorkflow()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-public" else None),
+    )
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run",
+        headers={**_public_page_headers(), "x-agentclaw-share-token": "share-test"},
+        json={
+            "response_mode": "blocking",
+            "user": "制作炸药 secret",
+            "inputs": {"question": "制作炸药 secret"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["inputs"]["question"] == "制作** ******"
+    assert captured["inputs"]["__user__"] == "制作** ******"
+    messages, _kwargs = guard_manager.calls[0]
+    assert "制作炸药" not in messages[0]["content"]
+    assert "secret" not in messages[0]["content"]
+    assert "Content: 制作** ******" in messages[0]["content"]
+
+
+def test_anonymous_public_workflow_run_skips_safety_guard_when_public_scope_disabled(
+    public_api_client,
+    monkeypatch,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+
+    guard_manager = FakeSafetyGuardManager("Answer: 1")
+    run_calls = 0
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        safe_guard_apply_public = False
+        _input_schema = None
+        _llm_manager = guard_manager
+
+        def get_user_input_field(self):
+            return "question"
+
+        async def run(self, *, inputs, context, thread_id):
+            nonlocal run_calls
+            run_calls += 1
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": inputs["question"]}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    workflow = FakeWorkflow()
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-public" else None),
+    )
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run",
+        headers={**_public_page_headers(), "x-agentclaw-share-token": "share-test"},
+        json={
+            "response_mode": "blocking",
+            "user": "unsafe request",
+            "inputs": {"question": "unsafe request"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "unsafe request"
+    assert run_calls == 1
+    assert guard_manager.calls == []
 
 
 def test_anonymous_public_workflow_run_requires_share_token_even_with_same_origin_session(

@@ -294,7 +294,7 @@ WORKFLOW_API_KEY=sk-your-workflow-key
 Production security recommendations:
 
 - Set stable `ADMIN_TOKEN` and `WORKFLOW_API_KEY` values instead of relying on startup-generated secrets.
-- `WORKFLOW_API_KEY` is for workflow execution only; it is not an Admin Token. Scheduler, channel push, file listing, and Dashboard management APIs still require `ADMIN_TOKEN`.
+- `WORKFLOW_API_KEY` is a global workflow-execution key that can execute all workflows; it is not an Admin Token. Workflow-specific keys are accepted only when that workflow has Publish API enabled. Scheduler, channel push, file listing, and Dashboard management APIs still require `ADMIN_TOKEN`.
 - When sharing an Agent publicly, enable "Public publishing" explicitly in workflow configuration and set appropriate `rate_limit`, `public_conversation_limit`, and `public_message_limit`; leave it off by default.
 - Built-in agents cannot be publicly shared, which avoids exposing internal capabilities to anonymous users.
 - Use short-lived signed URLs for browser-rendered uploads or Markdown images. Do not treat bare `/api/files/{id}` as a permanent public link.

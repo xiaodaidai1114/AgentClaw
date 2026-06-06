@@ -64,6 +64,10 @@ class WorkflowInfo(BaseModel):
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
     publish_to_square: bool = False
+    api_published: bool = True
+    safe_guard_configured: bool = False
+    safe_guard_apply_api: bool = False
+    safe_guard_apply_public: bool = True
     rate_limit: Optional[str] = None
     public_conversation_limit: int = 20
     public_message_limit: int = 200
@@ -98,6 +102,10 @@ class WorkflowStructure(BaseModel):
     public_share_enabled: bool = False
     public_share_token: Optional[str] = None
     publish_to_square: bool = False
+    api_published: bool = True
+    safe_guard_configured: bool = False
+    safe_guard_apply_api: bool = False
+    safe_guard_apply_public: bool = True
     rate_limit: Optional[str] = None
     public_conversation_limit: int = 20
     public_message_limit: int = 200

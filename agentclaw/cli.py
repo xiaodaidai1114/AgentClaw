@@ -1173,6 +1173,10 @@ if __name__ == "__main__":
 TEMPLATE_MODELS_JSON = '''{
   "default": "gpt-4o-mini",
   "fallback": "gpt-3.5-turbo",
+  "safe_guard": "",
+  "safe_guard_apply_api": false,
+  "safe_guard_apply_public": true,
+  "safe_guard_rules": "",
   "models": [
     {
       "id": "gpt-4o-mini",

@@ -468,7 +468,7 @@ export const publicAudioApi = {
 
 // 公开的 Conversations API（用于分享页面）
 export const publicConversationsApi = {
-  list: (workflowId, pageSize = 50, source = 'public', shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}`, { params: { page: 1, page_size: pageSize, source }, headers: publicShareHeaders(shareToken), withCredentials: true }),
+  list: (workflowId, pageSize = 50, source = 'public', shareToken = '', includeMessages = false) => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}`, { params: { page: 1, page_size: pageSize, source, include_messages: includeMessages }, headers: publicShareHeaders(shareToken), withCredentials: true }),
   create: (workflowId, title = null, source = 'public', shareToken = '') => publicApi.post('/conversations', publicConversationPayload(workflowId, title, source), { headers: publicShareHeaders(shareToken), withCredentials: true }),
   get: (workflowId, conversationId, shareToken = '') => publicApi.get(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, { headers: publicShareHeaders(shareToken), withCredentials: true }),
   update: (workflowId, conversationId, data, shareToken = '') => publicApi.put(`/conversations/${encodeURIComponent(workflowId)}/${encodeURIComponent(conversationId)}`, data, { headers: publicShareHeaders(shareToken), withCredentials: true }),

@@ -87,7 +87,8 @@ async def authenticate_workflow_or_admin_bearer(
     except HTTPException:
         token = extract_bearer_token(request)
         workflow_key = str(getattr(workflow, "workflow_api_key", "") or "").strip()
-        if token and workflow_key and safe_compare_digest(token, workflow_key):
+        api_published = getattr(workflow, "api_published", True) is not False
+        if api_published and token and workflow_key and safe_compare_digest(token, workflow_key):
             return AuthPrincipal(
                 subject=f"workflow:{workflow_id or getattr(workflow, 'id', '')}",
                 auth_type="workflow",

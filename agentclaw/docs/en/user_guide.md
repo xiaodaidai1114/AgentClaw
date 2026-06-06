@@ -1289,7 +1289,7 @@ curl -X POST http://localhost:8000/api/workflow/run \
   }'
 ```
 
-`<WORKFLOW_API_KEY>` can be the global `WORKFLOW_API_KEY` environment variable or the workflow's `workflow_api_key`. A workflow-specific key is scoped to that workflow only. It does not grant Admin capabilities such as scheduler management, channel push, file listing, or Dashboard management.
+`<WORKFLOW_API_KEY>` can be the global `WORKFLOW_API_KEY` environment variable, or the workflow's own `workflow_api_key` when **Publish API** is enabled for that workflow. The global key can execute all workflows. A workflow-specific key is scoped to that workflow only and does not grant Admin capabilities such as scheduler management, channel push, file listing, or Dashboard management.
 
 ### Request Parameters
 
@@ -1668,7 +1668,10 @@ agentclaw serve [-p PORT] [-h HOST] [-d PROJECT_DIR] [--reload]
 | `rate_limit` | None | Public Agent anonymous run/conversation rate limit, e.g. `10/min` |
 | `public_share_enabled` | False | Whether anonymous public publishing is allowed; off by default |
 | `public_share_token` | None | Public share token, generated when public publishing is enabled |
+| `api_published` | True | Whether the workflow-specific API key is accepted by `/api/workflow/run`; global `WORKFLOW_API_KEY` is unaffected |
 | `workflow_api_key` | None | Workflow-specific execution key |
+| `safe_guard_apply_api` | False | Whether this workflow checks user input before API runs |
+| `safe_guard_apply_public` | True | Whether this workflow checks user input on public agents, public rooms, and player chat |
 | `public_conversation_limit` | 20 | Public conversation quota per client |
 | `public_message_limit` | 200 | Public message quota per conversation update |
 | `inject_as_agentic_capability` | True | Whether to inject the workflow name, description, and inputs into the built-in agent capability catalog for reuse; disabling it does not affect direct execution |
@@ -1682,7 +1685,7 @@ Note: `auth_required` and `allowed_roles` are reserved for a future multi-user e
 | Variable | Description |
 |----------|-------------|
 | `ADMIN_TOKEN` | Admin API auth token |
-| `WORKFLOW_API_KEY` | Default workflow execution Bearer key; no Admin permissions. Workflows can set their own `workflow_api_key` |
+| `WORKFLOW_API_KEY` | Global workflow execution Bearer key; no Admin permissions; can execute all workflows |
 | `MCP_TOKEN` | MCP authentication token; send as `Authorization: Bearer <MCP_TOKEN>` |
 | `PG_HOST` | PostgreSQL host |
 | `PG_PORT` | PostgreSQL port; also the Docker host-mapped port in Docker mode |

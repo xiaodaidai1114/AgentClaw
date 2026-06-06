@@ -134,3 +134,26 @@ def test_llm_manager_ignores_active_non_chat_fallback_state(tmp_path):
 
     assert config.id == "primary"
     assert manager._fallback_state.is_fallback is False
+
+
+def test_llm_manager_loads_safe_guard_model_and_rules(tmp_path):
+    models_path = tmp_path / "models.json"
+    models_path.write_text(
+        json.dumps(
+                {
+                    "default": "primary",
+                    "safe_guard": "guard",
+                    "safe_guard_rules": "block unsafe content",
+                    "models": [
+                        {"id": "primary", "type": "chat", "model": "primary-model"},
+                    {"id": "guard", "type": "chat", "model": "guard-model"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = LLMManager(config_path=str(models_path))
+
+    assert manager.safe_guard_id == "guard"
+    assert manager.safe_guard_rules == "block unsafe content"

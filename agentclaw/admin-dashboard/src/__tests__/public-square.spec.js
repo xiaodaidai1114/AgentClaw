@@ -37,7 +37,9 @@ describe('public agent square', () => {
     const en = readFileSync(resolve(process.cwd(), 'src/locales/en-US.js'), 'utf8')
 
     expect(configSource).toContain('workflowForm.publish_to_square')
+    expect(configSource).toContain('workflowForm.api_published')
     expect(configSource).toContain('workflowConfig.workflow.publishToSquare')
+    expect(configSource).toContain('workflowConfig.workflow.apiPublished')
     expect(configSource).toContain(':disabled="isBuiltinWorkflow || !workflowForm.public_share_enabled"')
     expect(configSource).toContain('onPublicShareChanged')
     expect(zh).toContain('publishToSquare')

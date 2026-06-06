@@ -400,6 +400,8 @@ class LLMManager(BaseComponent):
         self.speech2text_id: Optional[str] = self._models_config.get("speech2text")
         self.tts_id: Optional[str] = self._models_config.get("tts")
         self.tts_voice: Optional[str] = self._models_config.get("tts_voice")
+        self.safe_guard_id: Optional[str] = self._models_config.get("safe_guard")
+        self.safe_guard_rules: str = str(self._models_config.get("safe_guard_rules") or "")
         
         # 模型列表（按顺序，用于自动降级）
         self.model_ids = [m["id"] for m in self._models_config.get("models", [])]
@@ -421,7 +423,7 @@ class LLMManager(BaseComponent):
         self._total_latency_ms: float = 0.0
         
         channels = {m["id"]: m.get("channel", "openai") for m in self._models_config.get("models", [])}
-        logger.info(f"LLMManager 初始化: default={self.default_id}, fallback={self.fallback_id}, fast={self.fast_id}, vision={self.vision_id}, models={self.model_ids}, channels={channels}")
+        logger.info(f"LLMManager 初始化: default={self.default_id}, fallback={self.fallback_id}, fast={self.fast_id}, vision={self.vision_id}, safe_guard={self.safe_guard_id}, models={self.model_ids}, channels={channels}")
     
     def _load_models_config(self, config_path: str) -> None:
         """加载 models.json 配置"""
@@ -468,6 +470,8 @@ class LLMManager(BaseComponent):
         self.speech2text_id = self._models_config.get("speech2text")
         self.tts_id = self._models_config.get("tts")
         self.tts_voice = self._models_config.get("tts_voice")
+        self.safe_guard_id = self._models_config.get("safe_guard")
+        self.safe_guard_rules = str(self._models_config.get("safe_guard_rules") or "")
         self.model_ids = [m["id"] for m in self._models_config.get("models", [])]
         if self._workflow_id:
             self._current_model_id = self.default_id

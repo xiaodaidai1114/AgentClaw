@@ -2,6 +2,31 @@
 
 All notable changes to AgentClaw will be documented in this file.
 
+## [1.1.5] - 2026-06-06
+
+**Added**
+
+- 新增 LLM 安全围栏配置：`models.json` 可选择 `safe_guard` 模型并填写额外规则，系统使用固定 0/1 判定模板，只检查用户输入，不检查系统内部提示词。
+- 工作流配置新增安全围栏作用范围开关，可按单个工作流分别控制是否作用于外部 API 和公开智能体；未配置 `safe_guard` 模型时相关开关自动禁用。
+- 工作流配置新增“发布 API”和工作流专属 API Key；默认保持发布 API 以兼容旧调用，`WORKFLOW_API_KEY` 保留为全局管理 Key，可访问所有工作流执行 API。
+- 新增公开敏感词库 `AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH`，支持绝对路径或相对项目路径，词条按空白分割，公开智能体输入与公开房间玩家聊天会先按同字数 `*` 打码。
+
+**Changed**
+
+- 项目版本从 `1.1.4` 更新为 `1.1.5`，同步 `VERSION`、运行时 fallback 版本、Python 包元数据、`uv.lock`、Dashboard package 元数据和 README 徽章。
+- 模型配置中的安全围栏只暴露模型选择和额外规则，不再让用户配置完整输出模板，避免破坏固定 0/1 判定格式。
+- 模型 API Key 与工作流 API Key 的配置展示改为保留/替换语义，避免已有密钥在“点击显示”后仍只显示 `***` 或被误清空。
+
+**Fixed**
+
+- 修复公开分享智能体在工作流运行中无法继续编辑下一条输入草稿的问题；公开分享页和公开房间会保持输入框可编辑，但运行中仍不会重复发送。
+- 修复公开分享页加载 public conversations 时未携带 `shareToken`、且未请求 `include_messages=true`，导致本地旧缓存中的 pending/运行状态可能污染新打开的分享会话并让输入异常的问题。
+- 修复公开分享页合并远端会话时会用本地旧消息覆盖服务端明确返回的空消息列表的问题；public 模式现在尊重服务端返回的 `messages`。
+
+**Tests**
+
+- 新增/扩展安全围栏、工作流级 API Key、公开敏感词库、模型配置密钥保留、公开分享输入可编辑、public conversation `shareToken` 与 `include_messages`、旧缓存不复活等回归测试，并重新构建 Dashboard `dist` 产物。
+
 ## [1.1.4] - 2026-06-03
 
 **Changed**

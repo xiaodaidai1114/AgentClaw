@@ -61,7 +61,7 @@ def make_builtin_workflow(tmp_path, node=None):
     )
 
 
-def test_workflow_settings_default_to_private_and_mask_workflow_api_key(tmp_path):
+def test_workflow_settings_default_to_private_and_returns_workflow_api_key(tmp_path):
     class Registry:
         @classmethod
         def get(cls, workflow_id):
@@ -95,11 +95,134 @@ def test_workflow_settings_default_to_private_and_mask_workflow_api_key(tmp_path
 
     assert settings["public_share_enabled"] is False
     assert settings["public_share_token"] == "share-token"
-    assert settings["workflow_api_key"] == "***"
+    assert settings["api_published"] is True
+    assert settings["workflow_api_key"] == "wf-secret"
     assert settings["workflow_api_key_set"] is True
+    assert settings["safe_guard_apply_api"] is False
+    assert settings["safe_guard_apply_public"] is False
+    assert settings["safe_guard_configured"] is False
     assert settings["public_conversation_limit"] == 20
     assert settings["public_message_limit"] == 200
     assert settings["inject_as_agentic_capability"] is True
+
+
+def test_workflow_settings_generate_workflow_api_key_and_can_disable_api_publish(tmp_path):
+    saved_path = tmp_path / ".agentclaw" / "wf-1_settings.json"
+    workflow = SimpleNamespace(
+        id="wf-1",
+        name="Workflow 1",
+        timeout=300,
+        recursion_limit=50,
+        cancel_on_disconnect=True,
+        auth_required=False,
+        allowed_roles=None,
+        rate_limit=None,
+        tracing=True,
+        description="",
+        welcome="",
+        public_share_enabled=False,
+        public_share_token="",
+        workflow_api_key="",
+        public_conversation_limit=20,
+        public_message_limit=200,
+        inject_as_agentic_capability=True,
+        _candidate_base_dirs=lambda: [tmp_path],
+    )
+
+    class Registry:
+        @classmethod
+        def get(cls, workflow_id):
+            return workflow if workflow_id == "wf-1" else None
+
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    service = SettingsService(registry=Registry)
+
+    settings = service.get_workflow("wf-1")
+
+    assert settings["api_published"] is True
+    assert settings["workflow_api_key"] == workflow.workflow_api_key
+    assert settings["workflow_api_key_set"] is True
+    assert settings["safe_guard_apply_api"] is False
+    assert settings["safe_guard_apply_public"] is False
+    assert settings["safe_guard_configured"] is False
+    assert workflow.workflow_api_key.startswith("wf-")
+
+    raw = saved_path.read_text(encoding="utf-8")
+    assert '"api_published": true' in raw
+    assert '"safe_guard_apply_api": false' in raw
+    assert '"safe_guard_apply_public": false' in raw
+    assert workflow.workflow_api_key in raw
+
+    disabled = service.update_workflow(
+        "wf-1",
+        {
+            "api_published": False,
+            "workflow_api_key": "***",
+            "safe_guard_apply_api": True,
+            "safe_guard_apply_public": False,
+        },
+    )
+
+    assert disabled["api_published"] is False
+    assert disabled["workflow_api_key"] == workflow.workflow_api_key
+    assert disabled["safe_guard_apply_api"] is False
+    assert disabled["safe_guard_apply_public"] is False
+    assert disabled["safe_guard_configured"] is False
+    assert workflow.workflow_api_key in saved_path.read_text(encoding="utf-8")
+
+
+def test_workflow_settings_allow_safety_guard_scope_when_model_configured(tmp_path):
+    (tmp_path / "models.json").write_text(
+        """
+        {
+          "safe_guard": "guard",
+          "models": [
+            {"id": "guard", "type": "chat", "model": "guard-model"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    workflow = SimpleNamespace(
+        id="wf-guard",
+        name="Workflow Guard",
+        timeout=300,
+        recursion_limit=50,
+        cancel_on_disconnect=True,
+        auth_required=False,
+        allowed_roles=None,
+        rate_limit=None,
+        tracing=True,
+        description="",
+        welcome="",
+        public_share_enabled=False,
+        public_share_token="",
+        workflow_api_key="wf-secret",
+        public_conversation_limit=20,
+        public_message_limit=200,
+        inject_as_agentic_capability=True,
+        _candidate_base_dirs=lambda: [tmp_path],
+    )
+
+    class Registry:
+        @classmethod
+        def get(cls, workflow_id):
+            return workflow if workflow_id == "wf-guard" else None
+
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    service = SettingsService(registry=Registry)
+
+    updated = service.update_workflow(
+        "wf-guard",
+        {
+            "safe_guard_apply_api": True,
+            "safe_guard_apply_public": False,
+        },
+    )
+
+    assert updated["safe_guard_configured"] is True
+    assert updated["safe_guard_apply_api"] is True
+    assert updated["safe_guard_apply_public"] is False
 
 
 def test_workflow_settings_default_agentic_capability_injection_when_missing(tmp_path):
@@ -181,7 +304,7 @@ def test_enabling_public_share_generates_token_and_preserves_masked_api_key(tmp_
 
     assert updated["public_share_enabled"] is True
     assert len(updated["public_share_token"]) >= 24
-    assert updated["workflow_api_key"] == "***"
+    assert updated["workflow_api_key"] == "wf-secret"
     assert workflow.workflow_api_key == "wf-secret"
     assert updated["rate_limit"] == "10/min"
     assert updated["public_conversation_limit"] == 3

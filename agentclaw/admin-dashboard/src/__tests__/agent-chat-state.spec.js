@@ -667,6 +667,21 @@ describe('AgentChat conversation runtime state', () => {
     expect(AgentChat.computed.inputEnabled.call(ctx)).toBe(true)
   })
 
+  it('keeps the public shared agent prompt draft editable while the agent is running', () => {
+    const ctx = {
+      workflowLoadError: '',
+      isPublicMode: true,
+      isPublicRoomMode: false,
+      isInitializing: false,
+      conversationId: 'conv-public',
+      userInputFieldName: 'user_input',
+      workflowStatus: 'running',
+      humanWaitingFor: '',
+    }
+
+    expect(AgentChat.computed.inputEnabled.call(ctx)).toBe(true)
+  })
+
   it('does not stop or send a public room prompt draft while the agent is running', async () => {
     const runSpy = vi.spyOn(publicRoomsApi, 'run').mockResolvedValue({})
     const ctx = {
@@ -1547,6 +1562,64 @@ describe('AgentChat conversation runtime state', () => {
     expect(JSON.parse(options.body).files).toBeUndefined()
   })
 
+  it('formats public safety guard stream errors without exposing raw HTTP JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      text: async () => JSON.stringify({
+        error: 'Safety guard is unavailable',
+        code: 'SAFETY_GUARD_UNAVAILABLE',
+      }),
+    })))
+
+    const ctx = {
+      isPublicMode: true,
+      publicSessionReady: true,
+      ensurePublicSession: vi.fn(async () => {}),
+      formData: {},
+      userInputFieldName: 'question',
+      selectedModel: '',
+      isBuiltin: false,
+      preFilterEnabled: true,
+      toolConfirmationRequired: false,
+      toolConfirmationLevel: 'off',
+      attachedFiles: [],
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversationId: 'conversation-1',
+      abortController: null,
+      streamEndedByWorkflowEvent: false,
+      workflowStatus: 'finished',
+      streamingContent: '',
+      currentToolCalls: [],
+      nodeSteps: [],
+      reasoningContent: '',
+      approvalMode: false,
+      handleSseLine: () => {},
+      createHttpResponseError: AgentChat.methods.createHttpResponseError,
+    }
+
+    let caught
+    try {
+      await AgentChat.methods.streamRequest.call(ctx, 'hello')
+    } catch (error) {
+      caught = error
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(caught.response.status).toBe(503)
+    expect(caught.response.data.code).toBe('SAFETY_GUARD_UNAVAILABLE')
+    expect(AgentChat.methods.getRequestFailedMessage.call({
+      $t: (key, params = {}) => ({
+        'agentChat.safetyGuardUnavailable': '安全围栏暂时不可用，已拒绝本次请求。',
+        'agentChat.safetyGuardBlocked': '这条消息已被安全围栏拦截。',
+        'agentChat.requestFailed': `抱歉，请求失败：${params.message}`,
+        'agentChat.unknownError': '未知错误',
+      }[key] || key),
+    }, caught)).toBe('安全围栏暂时不可用，已拒绝本次请求。')
+  })
+
   it('drops local-only public conversations when the server list succeeds', async () => {
     const remoteList = vi.fn(async () => ({
       conversations: [
@@ -1566,9 +1639,70 @@ describe('AgentChat conversation runtime state', () => {
 
     await AgentChat.methods.loadConversations.call(ctx)
 
-    expect(remoteList).toHaveBeenCalledWith('workflow-1', 50, 'public')
+    expect(remoteList).toHaveBeenCalledWith('workflow-1', 50, 'public', undefined, true)
     expect(ctx.conversations.map(c => c.id)).toEqual(['conv-remote'])
     expect(JSON.parse(localStorage.getItem('public_conv_workflow-1')).map(c => c.id)).toEqual(['conv-remote'])
+  })
+
+  it('passes the share token when loading public conversations', async () => {
+    const remoteList = vi.fn(async () => ({ conversations: [] }))
+    localStorage.clear()
+    const ctx = {
+      isPublicMode: true,
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversations: [],
+      convApi: { list: remoteList },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(remoteList).toHaveBeenCalledWith('workflow-1', 50, 'public', 'share-token', true)
+  })
+
+  it('requests public conversation messages from the server list', async () => {
+    const remoteList = vi.fn(async () => ({ conversations: [] }))
+    localStorage.clear()
+    const ctx = {
+      isPublicMode: true,
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversations: [],
+      convApi: { list: remoteList },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(remoteList.mock.calls[0][4]).toBe(true)
+  })
+
+  it('does not revive stale public cached messages when the server returns an empty message list', async () => {
+    const remoteList = vi.fn(async () => ({
+      conversations: [
+        { id: 'conv-public', title: 'Remote public', messages: [], updated_at: 30 },
+      ],
+    }))
+    localStorage.clear()
+    localStorage.setItem('public_conv_workflow-1', JSON.stringify([
+      {
+        id: 'conv-public',
+        title: 'Local public',
+        messages: [{ role: 'assistant', content: 'old pending state', pendingHumanInput: true }],
+        updated_at: 20,
+      },
+    ]))
+    const ctx = {
+      isPublicMode: true,
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversations: [],
+      convApi: { list: remoteList },
+    }
+
+    await AgentChat.methods.loadConversations.call(ctx)
+
+    expect(ctx.conversations[0].messages).toEqual([])
+    expect(JSON.parse(localStorage.getItem('public_conv_workflow-1'))[0].messages).toEqual([])
   })
 
   it('opens the public session before loading public conversations', async () => {

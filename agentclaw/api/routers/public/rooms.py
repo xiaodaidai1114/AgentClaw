@@ -39,7 +39,8 @@ from agentclaw.api.schemas.public_room import (
     PublicRoomJoinRequest,
     PublicRoomTypingRequest,
 )
-from agentclaw.api.services.public_room_chat_service import get_public_room_chat_service
+from agentclaw.api.services.public_room_chat_service import PublicRoomChatThrottleError, get_public_room_chat_service
+from agentclaw.api.services.public_sensitive_words_service import mask_public_workflow_inputs
 from agentclaw.api.services.public_room_service import (
     PUBLIC_ROOM_BUSY,
     PUBLIC_ROOM_INFRA_ERROR,
@@ -48,6 +49,12 @@ from agentclaw.api.services.public_room_service import (
     PublicRoomInfraError,
     get_public_room_service,
     public_room_owner_id,
+)
+from agentclaw.api.services.safety_guard_service import (
+    check_public_content_safety,
+    collect_public_user_input_content,
+    public_safety_guard_blocked_payload,
+    public_safety_guard_error_payload,
 )
 from agentclaw.runtime.sse import sse_format
 
@@ -64,6 +71,12 @@ def public_room_chat_send_rate_limit() -> str:
 
 
 def _service_error_response(error: Exception) -> JSONResponse:
+    if isinstance(error, PublicRoomChatThrottleError):
+        return JSONResponse(
+            status_code=429,
+            content={"error": str(error), "code": "RATE_LIMITED"},
+            headers={"Retry-After": str(error.retry_after)},
+        )
     if isinstance(error, PublicRoomInfraError):
         return JSONResponse(
             status_code=503,
@@ -80,6 +93,9 @@ def _service_error_response(error: Exception) -> JSONResponse:
         )
     if isinstance(error, PublicRoomAccessError):
         return forbidden_response(str(error))
+    status_code, safety_payload = public_safety_guard_error_payload(error)
+    if safety_payload.get("code") == "SAFETY_GUARD_UNAVAILABLE":
+        return JSONResponse(status_code=status_code, content=safety_payload)
     if isinstance(error, ValueError):
         return JSONResponse(
             status_code=400,
@@ -410,6 +426,7 @@ async def send_public_room_chat(room_id: str, request: Request, req: PublicRoomC
             participant["owner_id"],
             participant["nickname"],
             req.content,
+            workflow=workflow,
         )
     except Exception as exc:
         return _service_error_response(exc)
@@ -465,6 +482,8 @@ async def run_public_room(room_id: str, request: Request):
         if normalize_error:
             return JSONResponse(status_code=400, content=normalize_error)
         input_data = input_data or {}
+        input_data = mask_public_workflow_inputs(input_data, user_input_field)
+        user_value = input_data.get("__user__", user_value)
         input_data["__public_room__"] = {
             "room_id": room_id,
             "nickname": participant["nickname"],
@@ -474,6 +493,21 @@ async def run_public_room(room_id: str, request: Request):
             return JSONResponse(status_code=413, content=size_error)
         if "files" in body:
             return JSONResponse(status_code=400, content={"error": "File attachments are not supported for anonymous public workflow runs", "code": ErrorCode.INVALID_REQUEST})
+        try:
+            guard = await check_public_content_safety(
+                workflow,
+                collect_public_user_input_content(
+                    user_value=user_value,
+                    input_data=input_data,
+                    user_input_field=user_input_field,
+                ),
+                surface="public",
+            )
+        except Exception as exc:
+            status_code, payload = public_safety_guard_error_payload(exc)
+            return JSONResponse(status_code=status_code, content=payload)
+        if guard.violated:
+            return JSONResponse(status_code=403, content=public_safety_guard_blocked_payload())
 
         await service.acquire_run_lock(room_id, participant["owner_id"], participant["nickname"])
         await service.set_typing(room_id, participant["owner_id"], False)

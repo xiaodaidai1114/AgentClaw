@@ -54,6 +54,21 @@
             <span class="field-hint">{{ t('workflowConfig.workflow.publishToSquareHint') }}</span>
           </div>
           <div class="form-field">
+            <label class="field-label">{{ t('workflowConfig.workflow.apiPublished') }}</label>
+            <n-switch v-model:value="workflowForm.api_published" :disabled="isBuiltinWorkflow" @update:value="workflowChanged = true" />
+            <span class="field-hint">{{ isBuiltinWorkflow ? t('workflowConfig.workflow.builtinApiDisabled') : t('workflowConfig.workflow.apiPublishedHint') }}</span>
+          </div>
+          <div class="form-field">
+            <label class="field-label">{{ t('workflowConfig.workflow.safeGuardApplyApi') }}</label>
+            <n-switch v-model:value="workflowForm.safe_guard_apply_api" :disabled="!workflowForm.safe_guard_configured" @update:value="workflowChanged = true" />
+            <span class="field-hint">{{ t('workflowConfig.workflow.safeGuardApplyApiHint') }}</span>
+          </div>
+          <div class="form-field">
+            <label class="field-label">{{ t('workflowConfig.workflow.safeGuardApplyPublic') }}</label>
+            <n-switch v-model:value="workflowForm.safe_guard_apply_public" :disabled="!workflowForm.safe_guard_configured" @update:value="workflowChanged = true" />
+            <span class="field-hint">{{ t('workflowConfig.workflow.safeGuardApplyPublicHint') }}</span>
+          </div>
+          <div class="form-field">
             <label class="field-label">{{ t('workflowConfig.workflow.injectAsAgenticCapability') }}</label>
             <n-switch v-model:value="workflowForm.inject_as_agentic_capability" @update:value="workflowChanged = true" />
             <span class="field-hint">{{ t('workflowConfig.workflow.injectAsAgenticCapabilityHint') }}</span>
@@ -405,6 +420,7 @@ async function fetchWorkflowConfig() {
     workflowId.value,
     t,
   )
+  const safeGuardConfigured = !!cfg.safe_guard_configured
   workflowForm.value = {
     timeout: cfg.timeout,
     recursion_limit: cfg.recursion_limit,
@@ -412,8 +428,12 @@ async function fetchWorkflowConfig() {
     public_share_enabled: isBuiltinWorkflow.value ? false : !!cfg.public_share_enabled,
     public_share_token: isBuiltinWorkflow.value ? '' : (cfg.public_share_token || ''),
     publish_to_square: isBuiltinWorkflow.value ? false : !!cfg.publish_to_square,
+    api_published: isBuiltinWorkflow.value ? false : cfg.api_published !== false,
     workflow_api_key: cfg.workflow_api_key || '',
     workflow_api_key_set: !!cfg.workflow_api_key_set,
+    safe_guard_configured: safeGuardConfigured,
+    safe_guard_apply_api: safeGuardConfigured && !!cfg.safe_guard_apply_api,
+    safe_guard_apply_public: safeGuardConfigured && cfg.safe_guard_apply_public !== false,
     inject_as_agentic_capability: cfg.inject_as_agentic_capability !== false,
     public_conversation_limit: cfg.public_conversation_limit || 20,
     public_message_limit: cfg.public_message_limit || 200,
@@ -458,10 +478,12 @@ async function saveWorkflowConfig() {
     workflowForm.value.public_share_enabled = false
     workflowForm.value.public_share_token = ''
     workflowForm.value.publish_to_square = false
+    workflowForm.value.api_published = false
   } else if (!workflowForm.value.public_share_enabled) {
     workflowForm.value.publish_to_square = false
   }
   const res = localizeBuiltinWorkflowConfig(await settingsApi.updateWorkflow(workflowId.value, workflowForm.value), workflowId.value, t)
+  const safeGuardConfigured = !!res.safe_guard_configured
   workflowForm.value = {
     timeout: res.timeout,
     recursion_limit: res.recursion_limit,
@@ -469,8 +491,12 @@ async function saveWorkflowConfig() {
     public_share_enabled: isBuiltinWorkflow.value ? false : !!res.public_share_enabled,
     public_share_token: isBuiltinWorkflow.value ? '' : (res.public_share_token || ''),
     publish_to_square: isBuiltinWorkflow.value ? false : !!res.publish_to_square,
+    api_published: isBuiltinWorkflow.value ? false : res.api_published !== false,
     workflow_api_key: res.workflow_api_key || '',
     workflow_api_key_set: !!res.workflow_api_key_set,
+    safe_guard_configured: safeGuardConfigured,
+    safe_guard_apply_api: safeGuardConfigured && !!res.safe_guard_apply_api,
+    safe_guard_apply_public: safeGuardConfigured && res.safe_guard_apply_public !== false,
     inject_as_agentic_capability: res.inject_as_agentic_capability !== false,
     public_conversation_limit: res.public_conversation_limit || 20,
     public_message_limit: res.public_message_limit || 200,

@@ -40,6 +40,7 @@ describe('dashboard security posture', () => {
     expect(source).not.toContain('`/workflows/${workflowId.value}/chat`')
     expect(chatSource).not.toContain("this.$route.query.public === '1'")
     expect(configSource).toContain('workflowForm.public_share_enabled')
+    expect(configSource).toContain('workflowForm.api_published')
     expect(configSource).toContain('workflowForm.workflow_api_key')
     expect(configSource).toContain('workflowForm.inject_as_agentic_capability')
     expect(configSource).toContain('workflowConfig.workflow.injectAsAgenticCapability')
@@ -103,7 +104,19 @@ describe('dashboard security posture', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/Settings.vue'), 'utf8')
 
     expect(source).not.toContain("if (variable.secret) return variable.raw_value ?? ''")
-    expect(source).toContain("if (variable.secret) return variable.value ?? ''")
+    expect(source).not.toContain("if (variable.secret) return variable.value ?? ''")
+    expect(source).toContain("const SECRET_MASK = '***'")
+    expect(source).toContain("if (variable.secret) return variable.value === SECRET_MASK ? '' : (variable.value ?? '')")
+  })
+
+  it('shows workflow-specific API keys returned by the admin settings API', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/WorkflowConfig.vue'), 'utf8')
+
+    expect(source).toContain("workflow_api_key: cfg.workflow_api_key || ''")
+    expect(source).toContain("workflow_api_key: res.workflow_api_key || ''")
+    expect(source).not.toContain("WORKFLOW_SECRET_MASK")
+    expect(source).not.toContain("cfg.workflow_api_key ===")
+    expect(source).not.toContain("res.workflow_api_key ===")
   })
 
   it('does not advertise legacy anonymous agent routes from the backend mount', () => {

@@ -845,7 +845,7 @@ WORKFLOW_API_KEY=sk-your-workflow-key
 生产环境安全建议：
 
 - 固定配置 `ADMIN_TOKEN` 和 `WORKFLOW_API_KEY`，不要依赖每次启动自动生成。
-- `WORKFLOW_API_KEY` 只用于工作流执行，不是 Admin Token；调度器、渠道推送、文件列表和 Dashboard 管理接口仍只给 `ADMIN_TOKEN`。
+- `WORKFLOW_API_KEY` 是可执行所有工作流的全局执行 Key，不是 Admin Token；工作流级 Key 只有在对应工作流开启发布 API 后才会被接受。调度器、渠道推送、文件列表和 Dashboard 管理接口仍只给 `ADMIN_TOKEN`。
 - 对外分享 Agent 时，在工作流配置里显式开启「公开发布」，并设置合适的 `rate_limit`、`public_conversation_limit`、`public_message_limit`；默认保持关闭。
 - 内置智能体不能公开分享，避免把内部能力暴露给匿名用户。
 - 浏览器里展示上传文件或 Markdown 图片时使用短期签名 URL，不要把裸 `/api/files/{id}` 当永久公开链接。

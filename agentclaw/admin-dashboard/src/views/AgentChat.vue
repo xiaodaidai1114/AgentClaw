@@ -742,7 +742,7 @@ export default {
       if (this.isInitializing || !this.conversationId) return false
       if (!this.userInputFieldName && !(this.workflowStatus === 'interrupted' && this.humanWaitingFor)) return false
       const enabledStatuses = ['idle', 'interrupted', 'finished', 'cancelled']
-      if (this.isPublicRoomMode) enabledStatuses.push('running')
+      if (this.isPublicMode || this.isPublicRoomMode) enabledStatuses.push('running')
       return enabledStatuses.includes(this.workflowStatus)
     },
     canManualCompressContext() {
@@ -1131,7 +1131,26 @@ export default {
         this.inputErrorTimer = null
       }, 5000)
     },
+    async createHttpResponseError(response) {
+      const bodyText = await response.text()
+      let data = null
+      try {
+        data = bodyText ? JSON.parse(bodyText) : null
+      } catch (_) {
+        data = null
+      }
+      const message = data?.error || bodyText || `HTTP ${response.status}`
+      const error = new Error(message)
+      error.response = {
+        status: response.status,
+        data: data || { error: bodyText },
+      }
+      return error
+    },
     getRequestFailedMessage(error) {
+      const code = error?.response?.data?.code
+      if (code === 'SAFETY_GUARD_BLOCKED') return this.$t('agentChat.safetyGuardBlocked')
+      if (code === 'SAFETY_GUARD_UNAVAILABLE') return this.$t('agentChat.safetyGuardUnavailable')
       return this.$t('agentChat.requestFailed', {
         message: error?.message || this.$t('agentChat.unknownError'),
       })
@@ -1889,7 +1908,9 @@ export default {
         const existingMessages = Array.isArray(existing.messages) ? existing.messages : []
         const hasIncomingMessages = Array.isArray(incoming?.messages)
         const incomingMessages = hasIncomingMessages ? incoming.messages : []
-        const messages = hasIncomingMessages && incomingMessages.length > existingMessages.length
+        const messages = this.isPublicMode && hasIncomingMessages
+          ? incomingMessages
+          : hasIncomingMessages && incomingMessages.length > existingMessages.length
           ? incomingMessages
           : existingMessages
         return { ...existing, ...incoming, messages }
@@ -1923,7 +1944,7 @@ export default {
       }
       if (this.isPublicMode) {
         try {
-          const res = await this.convApi.list(this.currentWorkflowId, 50, 'public')
+          const res = await this.convApi.list(this.currentWorkflowId, 50, 'public', this.shareToken, true)
           const apiConvs = res.conversations || []
           const merged = mergeServerConversationList(apiConvs, localConvs)
           this.conversations = merged
@@ -2581,7 +2602,7 @@ export default {
         body: JSON.stringify(body), signal: this.abortController.signal,
       })
       if (handleAdminFetchAuthError(response)) throw new Error(this.$t('auth.invalidToken'))
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`)
+      if (!response.ok) throw await this.createHttpResponseError(response)
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''

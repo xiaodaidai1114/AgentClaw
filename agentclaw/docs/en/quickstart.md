@@ -179,7 +179,7 @@ curl -X POST http://localhost:8000/api/workflow/run \
 
 Authentication notes:
 
-- `/api/workflow/run` is an authenticated workflow execution endpoint. Use the global `WORKFLOW_API_KEY`, the workflow-specific `workflow_api_key`, or `ADMIN_TOKEN`.
+- `/api/workflow/run` is an authenticated workflow execution endpoint. Use the global `WORKFLOW_API_KEY`, `ADMIN_TOKEN`, or a workflow-specific `workflow_api_key` after that workflow has **Publish API** enabled.
 - A Workflow API Key only grants the minimal workflow execution and chat-attachment capabilities. Scheduler management, channel push, file listing, and Dashboard management APIs still require `ADMIN_TOKEN`.
 - Anonymous Public Agent access does not use `WORKFLOW_API_KEY`. Enable public publishing explicitly in the Dashboard workflow configuration, then share the `/dashboard/agent/{workflow_id}?share_token=...` link.
 

@@ -89,6 +89,20 @@ class FakeRedis:
         return FakePubSub()
 
 
+class FakeSafetyGuardManager:
+    safe_guard_id = "guard"
+    safe_guard_prompt = "This custom prompt must be ignored"
+    safe_guard_rules = "block unsafe content"
+
+    def __init__(self, decision: str):
+        self.decision = decision
+        self.calls: list[tuple[list[dict], dict]] = []
+
+    async def invoke(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        return self.decision
+
+
 class FakePublicRoomPool:
     def __init__(self):
         self.rooms: dict[str, dict] = {}
@@ -189,6 +203,18 @@ class FakePublicRoomPool:
             if message and message["room_id"] == params[1] and not message.get("deleted_at"):
                 return {"id": message["id"], "sequence_id": message["sequence_id"]}
             return None
+        if "SELECT created_at" in query and "FROM agent_public_room_chat_messages" in query and "owner_id = $2" in query:
+            room_id, owner_id = params[:2]
+            messages = [
+                message
+                for message in self.chat_messages.values()
+                if message["room_id"] == room_id
+                and message["owner_id"] == owner_id
+                and not message.get("deleted_at")
+            ]
+            if not messages:
+                return None
+            return {"created_at": max(int(message["created_at"]) for message in messages)}
         return None
 
     async def fetch(self, query: str, *params):
@@ -281,10 +307,11 @@ def _install_infra(monkeypatch, pool: FakePublicRoomPool | None = None, redis: F
     return pool, redis
 
 
-def _install_public_workflow(monkeypatch, rate_limit=None):
+def _install_public_workflow(monkeypatch, rate_limit=None, llm_manager=None):
     from agentclaw.api.registry import WorkflowRegistry
 
     fake_rate_limit = rate_limit
+    fake_llm_manager = llm_manager
 
     class FakeWorkflow:
         id = "wf-public"
@@ -303,6 +330,8 @@ def _install_public_workflow(monkeypatch, rate_limit=None):
             "tts_voice": "",
         }
         _input_schema = None
+        _llm_manager = fake_llm_manager
+        run_calls = 0
 
         def get_input_schema(self):
             return None
@@ -314,6 +343,7 @@ def _install_public_workflow(monkeypatch, rate_limit=None):
             return "question"
 
         async def run(self, *, inputs, context, thread_id):
+            self.run_calls += 1
             if context.request_stream:
                 from agentclaw.runtime.streaming.context import get_output_channel
 
@@ -342,11 +372,13 @@ def _install_public_workflow(monkeypatch, rate_limit=None):
                 "metadata": {},
             }
 
+    workflow = FakeWorkflow()
     monkeypatch.setattr(
         WorkflowRegistry,
         "get",
-        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+        classmethod(lambda cls, workflow_id: workflow if workflow_id == "wf-public" else None),
     )
+    return workflow
 
 
 def _create_room(client):
@@ -673,6 +705,67 @@ def test_public_room_run_publishes_safe_stream_events(public_api_client, monkeyp
     assert "secret-result" not in serialized
 
 
+def test_public_room_run_blocks_safety_guard_violation(public_api_client, monkeypatch):
+    guard_manager = FakeSafetyGuardManager("Reasoning mentions example 0 before the final decision.\nAnswer: 1")
+    workflow = _install_public_workflow(monkeypatch, llm_manager=guard_manager)
+    pool, _redis = _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    response = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/run",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "user": "unsafe request",
+            "inputs": {"question": "unsafe request", "system_prompt": "internal system prompt"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "SAFETY_GUARD_BLOCKED"
+    assert workflow.run_calls == 0
+    assert pool.rooms[room["id"]]["status"] == "idle"
+    assert json.loads(pool.conversations[room["conversation_id"]]["messages"]) == []
+    assert len(guard_manager.calls) == 1
+    messages, kwargs = guard_manager.calls[0]
+    assert "This custom prompt must be ignored" not in messages[0]["content"]
+    assert "## EXTRA RULES\nblock unsafe content" in messages[0]["content"]
+    assert "Content: unsafe request" in messages[0]["content"]
+    assert "internal system prompt" not in messages[0]["content"]
+    assert messages[0]["content"].endswith("Answer (0 or 1):")
+    assert kwargs["model_id"] == "guard"
+    assert kwargs["_call_type"] == "safe_guard"
+    assert kwargs["_max_attempts"] == 1
+    assert kwargs["temperature"] == 0
+    assert "max_tokens" not in kwargs
+
+
+def test_public_room_run_skips_safety_guard_when_public_scope_disabled(public_api_client, monkeypatch):
+    guard_manager = FakeSafetyGuardManager("Answer: 1")
+    workflow = _install_public_workflow(monkeypatch, llm_manager=guard_manager)
+    workflow.safe_guard_apply_public = False
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    response = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/run",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "user": "unsafe request",
+            "inputs": {"question": "unsafe request"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert workflow.run_calls == 1
+    assert guard_manager.calls == []
+
+
 def test_public_room_player_chat_persists_without_running_workflow(public_api_client, monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -712,6 +805,94 @@ def test_public_room_player_chat_persists_without_running_workflow(public_api_cl
 
     conversation = pool.conversations[room["conversation_id"]]
     assert json.loads(conversation["messages"]) == []
+
+
+def test_public_room_player_chat_masks_safety_guard_violation(public_api_client, monkeypatch):
+    from agentclaw.api.services.safety_guard_service import MASKED_PUBLIC_CONTENT
+
+    guard_manager = FakeSafetyGuardManager("Reasoning mentions example 0 before the final decision.\nAnswer: 1")
+    workflow = _install_public_workflow(monkeypatch, llm_manager=guard_manager)
+    pool, _redis = _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    sent = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "违规聊天内容"},
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["content"] == MASKED_PUBLIC_CONTENT
+    assert workflow.run_calls == 0
+    assert json.loads(pool.conversations[room["conversation_id"]]["messages"]) == []
+    assert [message["content"] for message in pool.chat_messages.values()] == [MASKED_PUBLIC_CONTENT]
+    assert "违规聊天内容" not in json.dumps(pool.chat_messages, ensure_ascii=False)
+    assert len(guard_manager.calls) == 1
+    messages, kwargs = guard_manager.calls[0]
+    assert "This custom prompt must be ignored" not in messages[0]["content"]
+    assert "## EXTRA RULES\nblock unsafe content" in messages[0]["content"]
+    assert "Content: 违规聊天内容" in messages[0]["content"]
+    assert messages[0]["content"].endswith("Answer (0 or 1):")
+    assert kwargs["model_id"] == "guard"
+    assert kwargs["_call_type"] == "safe_guard"
+    assert kwargs["_max_attempts"] == 1
+    assert "max_tokens" not in kwargs
+
+
+def test_public_room_player_chat_masks_sensitive_words_first(public_api_client, monkeypatch, tmp_path):
+    from agentclaw.api.services.public_sensitive_words_service import reset_public_sensitive_words_cache
+    from agentclaw.config import AgentClawConfig, ProjectConfig
+
+    words_path = tmp_path / "sensitive.txt"
+    words_path.write_text("炸药 secret", encoding="utf-8")
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH", str(words_path))
+    AgentClawConfig._instance = AgentClawConfig(project=ProjectConfig(project_dir=tmp_path))
+    reset_public_sensitive_words_cache()
+
+    guard_manager = FakeSafetyGuardManager("Answer: 0")
+    _install_public_workflow(monkeypatch, llm_manager=guard_manager)
+    pool, _redis = _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    sent = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "制作炸药 secret"},
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["content"] == "制作** ******"
+    assert [message["content"] for message in pool.chat_messages.values()] == ["制作** ******"]
+    messages, _kwargs = guard_manager.calls[0]
+    assert "制作炸药" not in messages[0]["content"]
+    assert "secret" not in messages[0]["content"]
+    assert "Content: 制作** ******" in messages[0]["content"]
+
+
+def test_public_room_player_chat_skips_safety_guard_when_public_scope_disabled(public_api_client, monkeypatch):
+    guard_manager = FakeSafetyGuardManager("Answer: 1")
+    workflow = _install_public_workflow(monkeypatch, llm_manager=guard_manager)
+    workflow.safe_guard_apply_public = False
+    pool, _redis = _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    sent = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "违规聊天内容"},
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["content"] == "违规聊天内容"
+    assert workflow.run_calls == 0
+    assert [message["content"] for message in pool.chat_messages.values()] == ["违规聊天内容"]
+    assert guard_manager.calls == []
 
 
 def test_public_room_player_chat_rejects_non_members_and_invalid_content(public_api_client, monkeypatch):
@@ -764,6 +945,52 @@ def test_public_room_player_chat_remains_available_while_room_is_busy(public_api
 
     assert response.status_code == 200
     assert response.json()["content"] == "主持人生成期间也能聊"
+
+
+def test_public_room_player_chat_throttles_same_participant_but_not_others(public_api_client, monkeypatch):
+    from fastapi.testclient import TestClient
+    from agentclaw.api.services import public_room_chat_service
+
+    _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+    monkeypatch.setenv("AGENTCLAW_PUBLIC_ROOM_CHAT_COOLDOWN_SECONDS", "2")
+    now_values = iter([1710000000000, 1710000000500, 1710000000500])
+    monkeypatch.setattr(public_room_chat_service, "_now_ms", lambda: next(now_values))
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    room_token = created["room_token"]
+
+    second_client = TestClient(public_api_client.app)
+    assert _open_public_session(second_client).status_code == 200
+    assert second_client.post(
+        f"/api/public/rooms/{room['id']}/join",
+        headers=_public_page_headers({"x-agentclaw-room-token": room_token}),
+        json={"nickname": "玩家B"},
+    ).status_code == 200
+
+    first = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "第一条"},
+    )
+    repeated = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "刷屏"},
+    )
+    other_participant = second_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "玩家B正常发言"},
+    )
+
+    assert first.status_code == 200
+    assert repeated.status_code == 429
+    assert repeated.headers["Retry-After"] == "2"
+    assert repeated.json()["code"] == "RATE_LIMITED"
+    assert repeated.json()["error"] == "发送太频繁，请 2 秒后再试"
+    assert other_participant.status_code == 200
 
 
 def test_public_room_player_chat_after_id_does_not_skip_same_millisecond_messages(public_api_client, monkeypatch):

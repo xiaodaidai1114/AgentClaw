@@ -178,7 +178,7 @@ curl -X POST http://localhost:8000/api/workflow/run \
 
 认证说明：
 
-- `/api/workflow/run` 是带 Bearer 鉴权的工作流执行接口，使用全局 `WORKFLOW_API_KEY`、该工作流单独配置的 `workflow_api_key`，或 `ADMIN_TOKEN`。
+- `/api/workflow/run` 是带 Bearer 鉴权的工作流执行接口，可使用全局 `WORKFLOW_API_KEY`、`ADMIN_TOKEN`，或在该工作流开启 **发布 API** 后使用其独立 `workflow_api_key`。
 - Workflow API Key 只用于执行工作流、上传会话附件等最小能力；调度器、渠道推送、文件列表、Dashboard 管理 API 仍需要 `ADMIN_TOKEN`。
 - 匿名访问的 Public Agent 不使用 `WORKFLOW_API_KEY`，需要在 Dashboard 的工作流配置中显式开启公开发布，然后使用带 `share_token` 的 `/dashboard/agent/{workflow_id}` 链接。
 

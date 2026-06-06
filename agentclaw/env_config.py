@@ -82,7 +82,7 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
         ),
         variables=(
             EnvVarSpec("ADMIN_TOKEN", "your-admin-token", "管理后台认证 Token。"),
-            EnvVarSpec("WORKFLOW_API_KEY", "sk-your-workflow-key", "默认工作流执行 API 的 Bearer Key；不具备 Admin 权限，工作流可单独配置 workflow_api_key。"),
+            EnvVarSpec("WORKFLOW_API_KEY", "sk-your-workflow-key", "全局工作流执行 API 的 Bearer Key；不具备 Admin 权限，可执行所有工作流。"),
             EnvVarSpec("MCP_TOKEN", "your-mcp-token", "聚合 MCP SSE/HTTP 入口的鉴权令牌。"),
             EnvVarSpec("AGENTCLAW_TRUST_PROXY_HEADERS", "false", "仅在可信反向代理会清理 X-Forwarded-* 头时开启；用于 Public Agent 同源校验和限流客户端识别。"),
             EnvVarSpec("AGENTCLAW_CONTENT_SECURITY_POLICY", "", "覆盖默认 Content-Security-Policy；留空使用内置安全头策略。"),
@@ -169,7 +169,9 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
             EnvVarSpec("AGENTCLAW_PUBLIC_MAX_MESSAGE_LENGTH", "4000", "Public 单条文本输入最大字符数；仅影响匿名公开工作流。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_AUDIO_ALLOWED_MIME_TYPES", "", "Public ASR 允许的音频 MIME 类型，逗号分隔；留空表示不限制。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_AUDIO_ALLOWED_EXTENSIONS", "", "Public ASR 允许的文件扩展名，逗号分隔；留空表示不限制。"),
+            EnvVarSpec("AGENTCLAW_PUBLIC_SENSITIVE_WORDS_PATH", "", "Public 敏感词库文件路径；支持绝对路径或相对项目目录路径，词以空白分隔，公开内容会按同字数 * 打码。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_DEFAULT_RATE_LIMIT", "30/min", "Public workflow 未配置 rate_limit 时的兜底限流，如 30/min；留空表示不启用兜底。"),
+            EnvVarSpec("AGENTCLAW_PUBLIC_ROOM_CHAT_COOLDOWN_SECONDS", "2", "Public 多人房间玩家聊天同一参与者连续发言冷却秒数；0 表示关闭。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_COOKIE_SECURE", "", "Public 匿名用户 cookie 是否强制 Secure：true/false；留空时按请求协议或可信代理头判断。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_RATE_LIMIT_BACKEND", "memory", "Public 限流后端：memory、redis 或 auto；默认 memory。"),
             EnvVarSpec("AGENTCLAW_PUBLIC_RATE_LIMIT_REDIS_REQUIRED", "false", "设为 true 时 Public 限流需要 Redis，不可用则返回 503。"),

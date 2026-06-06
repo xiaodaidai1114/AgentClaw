@@ -97,8 +97,13 @@ class WorkflowRegistry:
         instance._workflows[workflow.id] = workflow
         try:
             from agentclaw.config import get_config
-            from agentclaw.api.services.settings_service import apply_saved_workflow_settings
-            apply_saved_workflow_settings(workflow, get_config().project.project_dir)
+            from agentclaw.api.services.settings_service import apply_saved_workflow_settings, _safe_guard_configured
+            config = get_config()
+            apply_saved_workflow_settings(
+                workflow,
+                config.project.project_dir,
+                safe_guard_configured=_safe_guard_configured(config),
+            )
         except Exception as e:
             logger.warning(f"应用工作流本地设置覆盖失败 {workflow.id}: {e}")
         auth_icon = "🔒" if require_auth else "🔓"
@@ -245,6 +250,9 @@ class WorkflowRegistry:
             "description": workflow.description,
             "auth_required": workflow.auth_required,
             "allowed_roles": workflow.allowed_roles,
+            "api_published": getattr(workflow, "api_published", True) is not False,
+            "safe_guard_apply_api": bool(getattr(workflow, "safe_guard_apply_api", False)),
+            "safe_guard_apply_public": getattr(workflow, "safe_guard_apply_public", True) is not False,
             "timeout": workflow.timeout,
             "nodes": list(workflow._nodes.keys()),
         }

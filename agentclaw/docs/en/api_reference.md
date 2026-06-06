@@ -47,7 +47,10 @@ Workflow(
     rate_limit: str = None,           # Public Agent anonymous rate limit, e.g. "10/min"
     public_share_enabled: bool = False,   # Enable anonymous public publishing; off by default
     public_share_token: str = None,       # Public share token, generated when publishing is enabled
+    api_published: bool = True,           # Accept this workflow's API key on /api/workflow/run
     workflow_api_key: str = None,         # Workflow-specific execution key
+    safe_guard_apply_api: bool = False,   # Check user input before API runs
+    safe_guard_apply_public: bool = True, # Check user input on public agents/rooms
     public_conversation_limit: int = 20,  # Public Agent conversation quota per client
     public_message_limit: int = 200,      # Public Agent message quota per conversation update
     inject_as_agentic_capability: bool = True,  # Inject into built-in agent capability catalog
@@ -845,7 +848,7 @@ Run a workflow in blocking or streaming mode.
 Requires `Authorization: Bearer <key>`. Accepted keys are:
 
 - Global `WORKFLOW_API_KEY`
-- The workflow's `workflow_api_key`, scoped to that workflow only
+- The workflow's `workflow_api_key`, scoped to that workflow only and accepted only when that workflow has **Publish API** enabled
 - `ADMIN_TOKEN`
 
 A Workflow API Key is not an Admin Token. It cannot access scheduler management, channel push, file listing, Dashboard management, or dangerous-action confirmation.

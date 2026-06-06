@@ -300,7 +300,7 @@ Configure model API keys in each model entry's `api_key` field in project `model
 | `REDIS_HOST` | Not set | Redis host; when unset, prompt hot reload is disabled |
 | `REDIS_PORT` | 6379 | Redis port |
 | `ADMIN_TOKEN` | Auto-generated | Admin dashboard auth token |
-| `WORKFLOW_API_KEY` | Auto-generated | Default `/api/workflow/run` execution Bearer key; no Admin permissions. Workflows can set their own `workflow_api_key` |
+| `WORKFLOW_API_KEY` | Auto-generated | Global `/api/workflow/run` execution Bearer key; no Admin permissions; can execute all workflows |
 | `MCP_TOKEN` | Auto-generated | MCP auth token; send it as `Authorization: Bearer <MCP_TOKEN>`. If missing, AgentClaw generates one and writes it to the project `.env`; URL query tokens are disabled by default. |
 | `AGENTCLAW_TRUST_PROXY_HEADERS` | false | Whether to trust reverse-proxy `X-Forwarded-*` headers. Enable only when the trusted proxy strips spoofed headers |
 | `AGENTCLAW_CONTENT_SECURITY_POLICY` | Built-in policy | Override the default CSP security header; leave empty for built-in policy |
@@ -317,7 +317,7 @@ The Dashboard can be deployed publicly, but the entry points have different acce
 | Entry point | Auth/access model | Purpose |
 |-------------|-------------------|---------|
 | `/admin/...` and Dashboard management pages | `ADMIN_TOKEN` | Manage workflows, scheduler, channels, knowledge bases, models, prompts, traces, and settings |
-| `/api/workflow/run`, `/api/upload` | `WORKFLOW_API_KEY`, workflow-specific `workflow_api_key`, or `ADMIN_TOKEN` | Workflow execution and chat attachment upload for trusted callers |
+| `/api/workflow/run`, `/api/upload` | `WORKFLOW_API_KEY`, `ADMIN_TOKEN`, or workflow-specific `workflow_api_key` when Publish API is enabled | Workflow execution and chat attachment upload for trusted callers |
 | `/dashboard/agent/{workflow_id}?share_token=...` | Explicit workflow public publishing + `share_token` + same-origin Public Session | Anonymous Public Agent share page |
 
 Notes:

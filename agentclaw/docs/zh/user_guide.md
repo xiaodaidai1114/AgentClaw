@@ -1340,7 +1340,7 @@ curl -X POST http://localhost:8000/api/workflow/run \
   }'
 ```
 
-`<WORKFLOW_API_KEY>` 可以是全局环境变量 `WORKFLOW_API_KEY`，也可以是该工作流配置里的 `workflow_api_key`。工作流级密钥只允许执行对应工作流；它不会获得调度器、渠道推送、文件列表、Dashboard 管理等 Admin 能力。
+`<WORKFLOW_API_KEY>` 可以是全局环境变量 `WORKFLOW_API_KEY`，也可以是在该工作流开启 **发布 API** 后使用其独立 `workflow_api_key`。全局 Key 可以执行所有工作流；工作流级密钥只允许执行对应工作流，且不会获得调度器、渠道推送、文件列表、Dashboard 管理等 Admin 能力。
 
 ### 请求参数
 
@@ -1725,7 +1725,10 @@ agentclaw serve [-p PORT] [-h HOST] [-d PROJECT_DIR] [--reload]
 | `rate_limit` | None | Public Agent 匿名执行/公开会话限流，如 `10/min` |
 | `public_share_enabled` | False | 是否允许匿名公开发布，默认关闭 |
 | `public_share_token` | None | 公开分享 token，开启公开发布时自动生成 |
+| `api_published` | True | 是否允许使用该工作流独立 API Key 调用 `/api/workflow/run`；不影响全局 `WORKFLOW_API_KEY` |
 | `workflow_api_key` | None | 当前工作流独立执行密钥 |
+| `safe_guard_apply_api` | False | 是否在该工作流 API 调用前检查用户输入 |
+| `safe_guard_apply_public` | True | 是否在该工作流公开智能体、公开房间和玩家聊天中检查用户输入 |
 | `public_conversation_limit` | 20 | 每客户端公开会话数量上限 |
 | `public_message_limit` | 200 | 公开会话单次消息数量上限 |
 | `inject_as_agentic_capability` | True | 是否把工作流名称、描述与输入参数注入内置智能体能力目录，用于复用现有能力；关闭后不影响直接执行 |
@@ -1739,7 +1742,7 @@ agentclaw serve [-p PORT] [-h HOST] [-d PROJECT_DIR] [--reload]
 | 变量 | 说明 |
 |------|------|
 | `ADMIN_TOKEN` | Admin API 认证 Token |
-| `WORKFLOW_API_KEY` | 默认工作流执行 Bearer Key，不具备 Admin 权限；工作流可单独设置 `workflow_api_key` |
+| `WORKFLOW_API_KEY` | 全局工作流执行 Bearer Key，不具备 Admin 权限，可执行所有工作流 |
 | `MCP_TOKEN` | MCP 鉴权令牌，通过 `Authorization: Bearer <MCP_TOKEN>` 发送 |
 | `PG_HOST` | PostgreSQL 主机 |
 | `PG_PORT` | PostgreSQL 端口；Docker 模式下也是宿主机映射端口 |

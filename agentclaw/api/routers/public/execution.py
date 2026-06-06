@@ -53,6 +53,13 @@ from agentclaw.api.schemas.execution import (
     ContextCompressRequest,
     ContextCompressResponse,
 )
+from agentclaw.api.services.safety_guard_service import (
+    check_public_content_safety,
+    collect_public_user_input_content,
+    public_safety_guard_blocked_payload,
+    public_safety_guard_error_payload,
+)
+from agentclaw.api.services.public_sensitive_words_service import mask_public_workflow_inputs
 from agentclaw.logger.config import get_logger
 
 logger = get_logger(__name__)
@@ -572,12 +579,30 @@ async def _run_workflow_request(
         return JSONResponse(status_code=400, content=normalize_error)
     input_data = normalized_input_data or {}
     if public_mode:
+        input_data = mask_public_workflow_inputs(input_data, user_input_field)
+        user_value = input_data.get("__user__", user_value)
         public_size_error = _public_input_size_error(
             user_value=user_value,
             input_data=input_data,
         )
         if public_size_error:
             return JSONResponse(status_code=413, content=public_size_error)
+    else:
+        try:
+            guard = await check_public_content_safety(
+                workflow,
+                collect_public_user_input_content(
+                    user_value=user_value,
+                    input_data=input_data,
+                    user_input_field=user_input_field,
+                ),
+                surface="api",
+            )
+        except Exception as exc:
+            status_code, payload = public_safety_guard_error_payload(exc)
+            return JSONResponse(status_code=status_code, content=payload)
+        if guard.violated:
+            return JSONResponse(status_code=403, content=public_safety_guard_blocked_payload())
 
     # Process file-type inputs
     from agentclaw.database import process_file_inputs
@@ -593,6 +618,21 @@ async def _run_workflow_request(
         )
         if public_file_error:
             return JSONResponse(status_code=400, content=public_file_error)
+        try:
+            guard = await check_public_content_safety(
+                workflow,
+                collect_public_user_input_content(
+                    user_value=user_value,
+                    input_data=input_data,
+                    user_input_field=user_input_field,
+                ),
+                surface="public",
+            )
+        except Exception as exc:
+            status_code, payload = public_safety_guard_error_payload(exc)
+            return JSONResponse(status_code=status_code, content=payload)
+        if guard.violated:
+            return JSONResponse(status_code=403, content=public_safety_guard_blocked_payload())
 
     if not public_mode:
         input_data = await process_file_inputs(

@@ -286,7 +286,7 @@ docker compose up -d
 | `REDIS_HOST` | 未设置 | Redis 地址，未设置时禁用 Prompt 热更新 |
 | `REDIS_PORT` | 6379 | Redis 端口 |
 | `ADMIN_TOKEN` | 自动生成 | 管理后台认证 Token |
-| `WORKFLOW_API_KEY` | 自动生成 | `/api/workflow/run` 默认执行 Bearer Key，不具备 Admin 权限；工作流可单独配置 `workflow_api_key` |
+| `WORKFLOW_API_KEY` | 自动生成 | `/api/workflow/run` 全局执行 Bearer Key，不具备 Admin 权限，可执行所有工作流 |
 | `MCP_TOKEN` | 自动生成 | MCP 鉴权令牌，请通过 `Authorization: Bearer <MCP_TOKEN>` 发送。缺失时 AgentClaw 会自动生成并写入项目 `.env`；默认不再接受 URL query token。 |
 | `AGENTCLAW_TRUST_PROXY_HEADERS` | false | 是否信任反向代理传入的 `X-Forwarded-*`；只在可信代理会清理伪造头时开启 |
 | `AGENTCLAW_CONTENT_SECURITY_POLICY` | 内置策略 | 覆盖默认 CSP 安全头；留空使用内置策略 |
@@ -303,7 +303,7 @@ Dashboard 可以部署到公网，但需要区分三类入口：
 | 入口 | 鉴权/访问方式 | 说明 |
 |------|---------------|------|
 | `/admin/...` 和 Dashboard 管理页面 | `ADMIN_TOKEN` | 管理工作流、调度器、渠道、知识库、模型、提示词、追踪等 |
-| `/api/workflow/run`、`/api/upload` | `WORKFLOW_API_KEY`、工作流级 `workflow_api_key` 或 `ADMIN_TOKEN` | 面向受信任调用方的工作流执行和会话附件上传 |
+| `/api/workflow/run`、`/api/upload` | `WORKFLOW_API_KEY`、`ADMIN_TOKEN`，或开启发布 API 后的工作流级 `workflow_api_key` | 面向受信任调用方的工作流执行和会话附件上传 |
 | `/dashboard/agent/{workflow_id}?share_token=...` | 工作流显式公开发布 + `share_token` + 同源 Public Session | 面向匿名用户的 Public Agent 分享页 |
 
 注意事项：
