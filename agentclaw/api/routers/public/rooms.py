@@ -44,9 +44,11 @@ from agentclaw.api.services.public_sensitive_words_service import mask_public_wo
 from agentclaw.api.services.public_room_service import (
     PUBLIC_ROOM_BUSY,
     PUBLIC_ROOM_INFRA_ERROR,
+    PUBLIC_ROOM_NICKNAME_TAKEN,
     PublicRoomAccessError,
     PublicRoomBusyError,
     PublicRoomInfraError,
+    PublicRoomNicknameTakenError,
     get_public_room_service,
     public_room_owner_id,
 )
@@ -90,6 +92,11 @@ def _service_error_response(error: Exception) -> JSONResponse:
                 "code": PUBLIC_ROOM_BUSY,
                 "running_nickname": error.running_nickname,
             },
+        )
+    if isinstance(error, PublicRoomNicknameTakenError):
+        return JSONResponse(
+            status_code=409,
+            content={"error": str(error), "code": PUBLIC_ROOM_NICKNAME_TAKEN},
         )
     if isinstance(error, PublicRoomAccessError):
         return forbidden_response(str(error))
@@ -243,7 +250,7 @@ async def create_public_room(workflow_id: str, request: Request, req: PublicRoom
     if rate_error:
         return rate_error
     try:
-        result = await get_public_room_service().create_room(workflow_id, owner_id, req.nickname)
+        result = await get_public_room_service().create_room(workflow_id, owner_id, req.nickname, req.expires_in_days)
         return result
     except Exception as exc:
         return _service_error_response(exc)
@@ -514,6 +521,10 @@ async def run_public_room(room_id: str, request: Request):
         user_text = str(user_value or input_data.get(user_input_field) or "")
         if user_text:
             await service.append_user_message(room_id, participant["owner_id"], user_text)
+        workflow_input_data = dict(input_data)
+        if user_text and user_input_field:
+            workflow_input_data[user_input_field] = f"{participant['nickname']}：{user_text}"
+            workflow_input_data["__user__"] = workflow_input_data[user_input_field]
 
         runtime_thread_id = public_runtime_thread_id(
             room["workflow_id"],
@@ -547,7 +558,7 @@ async def run_public_room(room_id: str, request: Request):
                 token = _output_channel_var.set(channel)
                 try:
                     await channel.push_workflow_started()
-                    return await workflow.run(inputs=input_data, context=context, thread_id=runtime_thread_id)
+                    return await workflow.run(inputs=workflow_input_data, context=context, thread_id=runtime_thread_id)
                 finally:
                     try:
                         await channel.finish()

@@ -107,4 +107,31 @@ describe('public agent square', () => {
     expect(messageSource).toContain('isPublicRoomParticipantMessage')
     expect(messageSource).toContain('!msg.isInterruptResponse && !isPublicRoomParticipantMessage')
   })
+
+  it('requires an expiry choice when creating public rooms', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain('publicRoomExpiresInDays')
+    expect(source).toContain('expires_in_days: this.publicRoomExpiresInDays')
+    expect(source).toContain('value: 1')
+    expect(source).toContain('value: 7')
+    expect(source).toContain('value: 30')
+  })
+
+  it('wires admin public room management into protected dashboard APIs and navigation', () => {
+    const apiSource = readFileSync(resolve(process.cwd(), 'src/api/index.js'), 'utf8')
+    const routerSource = readFileSync(resolve(process.cwd(), 'src/router/index.js'), 'utf8')
+    const sidebarSource = readFileSync(resolve(process.cwd(), 'src/components/Sidebar.vue'), 'utf8')
+
+    expect(apiSource).toContain('export const publicRoomsAdminApi')
+    expect(apiSource).toContain("api.get('/public-rooms'")
+    expect(apiSource).toContain("api.get(`/public-rooms/${encodeURIComponent(roomId)}`)")
+    expect(apiSource).toContain("api.delete(`/public-rooms/${encodeURIComponent(roomId)}`)")
+    expect(apiSource).toContain('/participants/${encodeURIComponent(ownerId)}')
+    expect(routerSource).toContain("path: '/public-rooms'")
+    expect(routerSource).toContain("name: 'PublicRooms'")
+    expect(routerSource).toContain("PublicRooms.vue")
+    expect(sidebarSource).toContain("key: '/public-rooms'")
+    expect(sidebarSource).toContain("path.startsWith('/public-rooms')")
+  })
 })

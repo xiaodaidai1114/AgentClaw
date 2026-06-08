@@ -37,6 +37,7 @@ export default {
     knowledgebases: '知识库',
     scheduler: '定时任务',
     channels: '渠道配置',
+    publicRooms: '公开会话',
     dashboard: '仪表盘',
     settings: '系统配置',
     expand: '展开导航',

@@ -132,6 +132,23 @@ class FakePublicRoomPool:
                 }
             )
             return "UPDATE 1"
+        if "UPDATE agent_public_rooms" in query and "revoked_at = $2" in query:
+            room_id, now = params[:2]
+            room = self.rooms.get(room_id)
+            if not room or room.get("revoked_at"):
+                return "UPDATE 0"
+            room.update(
+                {
+                    "status": "idle",
+                    "running_by": None,
+                    "running_nickname": None,
+                    "running_started_at": None,
+                    "revoked_at": now,
+                    "updated_at": now,
+                    "version": room.get("version", 1) + 1,
+                }
+            )
+            return "UPDATE 1"
         if "UPDATE agent_public_rooms" in query and "status = 'idle'" in query:
             room_id, owner_id, now = params[:3]
             room = self.rooms.get(room_id)
@@ -147,6 +164,14 @@ class FakePublicRoomPool:
                     "version": room.get("version", 1) + 1,
                 }
             )
+            return "UPDATE 1"
+        if "UPDATE agent_public_room_participants" in query and "kicked_at = $3" in query:
+            room_id, owner_id, now = params[:3]
+            participant = self.participants.get((room_id, owner_id))
+            if not participant or participant.get("kicked_at"):
+                return "UPDATE 0"
+            participant["kicked_at"] = now
+            participant["last_seen_at"] = now
             return "UPDATE 1"
         return "OK"
 
@@ -165,6 +190,7 @@ class FakePublicRoomPool:
                 "version": 1,
                 "created_at": params[5],
                 "updated_at": params[5],
+                "expires_at": params[6],
                 "revoked_at": None,
             }
             self.rooms[room["id"]] = room
@@ -173,6 +199,17 @@ class FakePublicRoomPool:
             return self.rooms.get(params[0])
         if "SELECT" in query and "FROM agent_public_rooms" in query and "WHERE conversation_id = $1" in query:
             return next((room for room in self.rooms.values() if room["conversation_id"] == params[0]), None)
+        if "SELECT" in query and "FROM agent_public_room_participants" in query and "nickname = $2" in query:
+            room_id, nickname = params[:2]
+            return next(
+                (
+                    dict(participant)
+                    for (rid, _owner), participant in self.participants.items()
+                    if rid == room_id and participant["nickname"] == nickname
+                    and not participant.get("kicked_at")
+                ),
+                None,
+            )
         if "SELECT" in query and "FROM agent_public_room_participants" in query:
             return self.participants.get((params[0], params[1]))
         if "SELECT" in query and "FROM agent_conversations" in query:
@@ -218,6 +255,12 @@ class FakePublicRoomPool:
         return None
 
     async def fetch(self, query: str, *params):
+        if "FROM agent_public_rooms" in query:
+            return sorted(
+                (dict(room) for room in self.rooms.values()),
+                key=lambda item: item["updated_at"],
+                reverse=True,
+            )
         if "FROM agent_public_room_chat_messages" in query:
             room_id = params[0]
             if "sequence_id >" in query:
@@ -240,10 +283,12 @@ class FakePublicRoomPool:
             return sorted(messages, key=lambda item: item["sequence_id"])[:limit]
         if "FROM agent_public_room_participants" in query:
             room_id = params[0]
+            include_kicked = "owner_id" in query or "kicked_at" in query and "kicked_at IS NULL" not in query
             return [
                 dict(participant)
                 for (rid, _owner), participant in self.participants.items()
                 if rid == room_id
+                and (include_kicked or not participant.get("kicked_at"))
             ]
         return []
 
@@ -255,7 +300,11 @@ class FakePublicRoomPool:
             return None
         if "COUNT(*)" in query and "agent_public_room_participants" in query:
             room_id = params[0]
-            return sum(1 for rid, _owner in self.participants if rid == room_id)
+            return sum(
+                1
+                for (rid, _owner), participant in self.participants.items()
+                if rid == room_id and not participant.get("kicked_at")
+            )
         return None
 
     async def executemany(self, query: str, params):
@@ -278,6 +327,7 @@ class FakePublicRoomPool:
             "nickname": nickname,
             "joined_at": now,
             "last_seen_at": now,
+            "kicked_at": None,
         }
         self.participants[(room_id, owner_id)] = participant
         return dict(participant)
@@ -331,7 +381,10 @@ def _install_public_workflow(monkeypatch, rate_limit=None, llm_manager=None):
         }
         _input_schema = None
         _llm_manager = fake_llm_manager
-        run_calls = 0
+
+        def __init__(self):
+            self.run_calls = 0
+            self.run_inputs = []
 
         def get_input_schema(self):
             return None
@@ -344,6 +397,7 @@ def _install_public_workflow(monkeypatch, rate_limit=None, llm_manager=None):
 
         async def run(self, *, inputs, context, thread_id):
             self.run_calls += 1
+            self.run_inputs.append(dict(inputs))
             if context.request_stream:
                 from agentclaw.runtime.streaming.context import get_output_channel
 
@@ -387,7 +441,7 @@ def _create_room(client):
     response = client.post(
         "/api/public/workflows/wf-public/rooms",
         headers=_public_page_headers({"x-agentclaw-share-token": "share-test"}),
-        json={"nickname": " 玩家A "},
+        json={"nickname": " 玩家A ", "expires_in_days": 7},
     )
     assert response.status_code == 200
     return response.json()
@@ -472,7 +526,7 @@ def test_public_room_create_join_state_typing_and_sanitized_messages(public_api_
     )
     assert run.status_code == 200
     assert run.json()["conversation_id"] == room["conversation_id"]
-    assert run.json()["answer"] == "answer::hello"
+    assert run.json()["answer"] == "answer::玩家A：hello"
 
     state = second_client.get(
         f"/api/public/rooms/{room['id']}/state?since_version=0",
@@ -484,7 +538,7 @@ def test_public_room_create_join_state_typing_and_sanitized_messages(public_api_
     messages = payload["conversation"]["messages"]
     assert messages[0]["role"] == "user"
     assert messages[0]["sender"]["nickname"] == "玩家A"
-    assert messages[1]["content"] == "answer::hello"
+    assert messages[1]["content"] == "answer::玩家A：hello"
     assert messages[1]["nodeSteps"] == [
         {
             "id": "secret-node",
@@ -503,6 +557,117 @@ def test_public_room_create_join_state_typing_and_sanitized_messages(public_api_
     assert "secret-result" not in serialized
     assert "owner_id" not in serialized
     assert "room_token" not in serialized
+
+
+def test_public_room_create_includes_expiry_and_rejects_over_30_days(public_api_client, monkeypatch):
+    _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+
+    session = _open_public_session(public_api_client)
+    assert session.status_code == 200
+    created = public_api_client.post(
+        "/api/public/workflows/wf-public/rooms",
+        headers=_public_page_headers({"x-agentclaw-share-token": "share-test"}),
+        json={"nickname": "玩家A", "expires_in_days": 30},
+    )
+    too_long = public_api_client.post(
+        "/api/public/workflows/wf-public/rooms",
+        headers=_public_page_headers({"x-agentclaw-share-token": "share-test"}),
+        json={"nickname": "玩家B", "expires_in_days": 31},
+    )
+
+    assert created.status_code == 200
+    room = created.json()["room"]
+    assert room["expires_at"] > room["created_at"]
+    assert room["expires_at"] - room["created_at"] <= 30 * 24 * 60 * 60 * 1000
+    assert too_long.status_code == 422
+
+
+def test_expired_public_room_rejects_public_access(public_api_client, monkeypatch):
+    _install_public_workflow(monkeypatch)
+    pool, _redis = _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    pool.rooms[room["id"]]["expires_at"] = 1
+
+    session = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/session",
+        headers=_public_page_headers({"x-agentclaw-room-token": created["room_token"]}),
+    )
+    state = public_api_client.get(
+        f"/api/public/rooms/{room['id']}/state?since_version=0",
+        headers=_public_page_headers(),
+    )
+
+    assert session.status_code == 404
+    assert state.status_code == 404
+
+
+def test_public_room_rejects_duplicate_nickname(public_api_client, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    room_token = created["room_token"]
+
+    second_client = TestClient(public_api_client.app)
+    assert _open_public_session(second_client).status_code == 200
+    response = second_client.post(
+        f"/api/public/rooms/{room['id']}/join",
+        headers=_public_page_headers({"x-agentclaw-room-token": room_token}),
+        json={"nickname": "玩家A"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PUBLIC_ROOM_NICKNAME_TAKEN"
+
+
+def test_public_room_allows_same_member_to_rejoin_same_nickname(public_api_client, monkeypatch):
+    _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    room_token = created["room_token"]
+
+    response = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/join",
+        headers=_public_page_headers({"x-agentclaw-room-token": room_token}),
+        json={"nickname": "玩家A"},
+    )
+
+    assert response.status_code == 200
+    assert {p["nickname"] for p in response.json()["participants"]} == {"玩家A"}
+
+
+def test_public_room_run_sends_nickname_to_workflow_but_stores_plain_message(public_api_client, monkeypatch):
+    workflow = _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+
+    response = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/run",
+        headers=_public_page_headers(),
+        json={"response_mode": "blocking", "user": "hello", "inputs": {"question": "hello"}},
+    )
+
+    assert response.status_code == 200
+    assert workflow.run_inputs[0]["question"] == "玩家A：hello"
+    state = public_api_client.get(
+        f"/api/public/rooms/{room['id']}/state?since_version=0",
+        headers=_public_page_headers(),
+    )
+    assert state.status_code == 200
+    messages = state.json()["conversation"]["messages"]
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "hello"
+    assert messages[0]["sender"]["nickname"] == "玩家A"
 
 
 def test_public_room_link_opens_session_without_workflow_share_token(public_api_client, monkeypatch):
@@ -693,7 +858,7 @@ def test_public_room_run_publishes_safe_stream_events(public_api_client, monkeyp
     assert "agent_node_finished" in event_names
     assert "agent_message_delta" in event_names
     assert "agent_run_finished" in event_names
-    assert "".join(event["delta"] for event in events if event["event"] == "agent_message_delta") == "answer::hello"
+    assert "".join(event["delta"] for event in events if event["event"] == "agent_message_delta") == "answer::玩家A：hello"
     node_started = next(event for event in events if event["event"] == "agent_node_started")
     node_finished = next(event for event in events if event["event"] == "agent_node_finished")
     assert node_started["node_id"] == "secret-node"
@@ -805,6 +970,68 @@ def test_public_room_player_chat_persists_without_running_workflow(public_api_cl
 
     conversation = pool.conversations[room["conversation_id"]]
     assert json.loads(conversation["messages"]) == []
+
+
+def test_admin_public_room_management_lists_detail_kicks_and_deletes_room(
+    public_api_client,
+    admin_api_client,
+    auth_tokens,
+    monkeypatch,
+):
+    from agentclaw.test.conftest import auth_header
+
+    _install_public_workflow(monkeypatch)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    chat = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/chat",
+        headers=_public_page_headers(),
+        json={"content": "大家好"},
+    )
+    assert chat.status_code == 200
+
+    headers = auth_header(auth_tokens.admin)
+    listed = admin_api_client.get("/admin/public-rooms", headers=headers)
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert listed_payload["total"] == 1
+    assert listed_payload["rooms"][0]["id"] == room["id"]
+    assert listed_payload["rooms"][0]["workflow_id"] == "wf-public"
+    assert listed_payload["rooms"][0]["participant_count"] == 1
+    assert listed_payload["rooms"][0]["expires_at"] == room["expires_at"]
+
+    detail = admin_api_client.get(f"/admin/public-rooms/{room['id']}", headers=headers)
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["room"]["id"] == room["id"]
+    assert detail_payload["conversation"]["messages"] == []
+    assert detail_payload["chat_messages"][0]["content"] == "大家好"
+    participant = detail_payload["participants"][0]
+    assert participant["nickname"] == "玩家A"
+    assert participant["owner_id"]
+
+    kicked = admin_api_client.delete(
+        f"/admin/public-rooms/{room['id']}/participants/{participant['owner_id']}",
+        headers=headers,
+    )
+    state_after_kick = public_api_client.get(
+        f"/api/public/rooms/{room['id']}/state?since_version=0",
+        headers=_public_page_headers(),
+    )
+    assert kicked.status_code == 200
+    assert kicked.json()["success"] is True
+    assert state_after_kick.status_code == 403
+
+    deleted = admin_api_client.delete(f"/admin/public-rooms/{room['id']}", headers=headers)
+    session_after_delete = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/session",
+        headers=_public_page_headers({"x-agentclaw-room-token": created["room_token"]}),
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["success"] is True
+    assert session_after_delete.status_code == 404
 
 
 def test_public_room_player_chat_masks_safety_guard_violation(public_api_client, monkeypatch):

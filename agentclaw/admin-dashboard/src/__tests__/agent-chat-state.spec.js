@@ -1620,6 +1620,19 @@ describe('AgentChat conversation runtime state', () => {
     }, caught)).toBe('安全围栏暂时不可用，已拒绝本次请求。')
   })
 
+  it('formats duplicate public room nickname errors for the join dialog', () => {
+    const error = new Error('Nickname is already used in this public room')
+    error.response = {
+      status: 409,
+      data: {
+        error: 'Nickname is already used in this public room',
+        code: 'PUBLIC_ROOM_NICKNAME_TAKEN',
+      },
+    }
+
+    expect(AgentChat.methods.formatPublicRoomDialogError.call({}, error, '加入公开会话失败')).toBe('该昵称已被使用')
+  })
+
   it('drops local-only public conversations when the server list succeeds', async () => {
     const remoteList = vi.fn(async () => ({
       conversations: [

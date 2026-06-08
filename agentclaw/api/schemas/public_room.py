@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class PublicRoomCreateRequest(BaseModel):
     nickname: str = Field(..., min_length=1, max_length=80)
+    expires_in_days: int = Field(7, ge=1, le=30)
 
 
 class PublicRoomJoinRequest(BaseModel):
@@ -31,6 +32,7 @@ class PublicRoomSummary(BaseModel):
     version: int = 1
     updated_at: int = 0
     created_at: Optional[int] = None
+    expires_at: Optional[int] = None
     running_nickname: Optional[str] = None
 
 

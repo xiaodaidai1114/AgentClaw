@@ -79,6 +79,11 @@ const dashboardRoutes = [
     redirect: '/channels?tab=logs',
   },
   {
+    path: '/public-rooms',
+    name: 'PublicRooms',
+    component: () => import('../views/PublicRooms.vue'),
+  },
+  {
     path: '/traces',
     redirect: '/dashboard?tab=traces',
   },

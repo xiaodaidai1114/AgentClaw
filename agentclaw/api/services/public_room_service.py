@@ -19,6 +19,8 @@ from agentclaw.utils.security import safe_compare_digest
 PUBLIC_ROOM_SOURCE = "public_room"
 PUBLIC_ROOM_INFRA_ERROR = "PUBLIC_ROOM_INFRA_REQUIRED"
 PUBLIC_ROOM_BUSY = "ROOM_BUSY"
+PUBLIC_ROOM_NICKNAME_TAKEN = "PUBLIC_ROOM_NICKNAME_TAKEN"
+PUBLIC_ROOM_MAX_EXPIRES_DAYS = 30
 
 _SECRET_MESSAGE_KEYS = {
     "toolCalls",
@@ -95,8 +97,16 @@ class PublicRoomBusyError(RuntimeError):
         super().__init__("Public room is busy")
 
 
+class PublicRoomNicknameTakenError(RuntimeError):
+    """Raised when another member already uses the requested nickname."""
+
+
 def _now_ms() -> int:
     return int(datetime.now().timestamp() * 1000)
+
+
+def _day_ms() -> int:
+    return 24 * 60 * 60 * 1000
 
 
 def _env_int(name: str, default: int) -> int:
@@ -121,6 +131,14 @@ def _typing_ttl_seconds() -> int:
 
 def _lock_ttl_seconds() -> int:
     return _env_int("AGENTCLAW_PUBLIC_ROOM_RUN_LOCK_TTL_SECONDS", 1800)
+
+
+def normalize_public_room_expires_days(value: int | str | None) -> int:
+    try:
+        days = int(value or 7)
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, min(days, PUBLIC_ROOM_MAX_EXPIRES_DAYS))
 
 
 def _event_ping_seconds() -> int:
@@ -301,6 +319,7 @@ class PublicRoomService:
                 version BIGINT NOT NULL DEFAULT 1,
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL,
+                expires_at BIGINT,
                 revoked_at BIGINT
             )
             """
@@ -313,19 +332,34 @@ class PublicRoomService:
                 nickname VARCHAR(80) NOT NULL,
                 joined_at BIGINT NOT NULL,
                 last_seen_at BIGINT NOT NULL,
+                kicked_at BIGINT,
                 PRIMARY KEY (room_id, owner_id)
             )
             """
         )
+        await pool.execute("ALTER TABLE agent_public_rooms ADD COLUMN IF NOT EXISTS expires_at BIGINT")
+        await pool.execute(
+            f"UPDATE agent_public_rooms SET expires_at = created_at + {PUBLIC_ROOM_MAX_EXPIRES_DAYS * _day_ms()} WHERE expires_at IS NULL"
+        )
+        await pool.execute("ALTER TABLE agent_public_room_participants ADD COLUMN IF NOT EXISTS kicked_at BIGINT")
         await pool.execute(
             "CREATE INDEX IF NOT EXISTS idx_agent_public_rooms_workflow ON agent_public_rooms(workflow_id)"
+        )
+        await pool.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_public_rooms_expires ON agent_public_rooms(expires_at)"
         )
         await pool.execute(
             "CREATE INDEX IF NOT EXISTS idx_agent_public_room_participants_seen ON agent_public_room_participants(room_id, last_seen_at DESC)"
         )
         self._tables_ready = True
 
-    async def create_room(self, workflow_id: str, creator_owner_id: str, nickname: str) -> dict[str, Any]:
+    async def create_room(
+        self,
+        workflow_id: str,
+        creator_owner_id: str,
+        nickname: str,
+        expires_in_days: int | str | None = 7,
+    ) -> dict[str, Any]:
         await self.ensure_infra()
         await self._ensure_tables()
         nickname = normalize_public_room_nickname(nickname)
@@ -333,6 +367,7 @@ class PublicRoomService:
             raise ValueError("nickname is required")
         pool = await self._get_pool()
         now = _now_ms()
+        expires_at = now + normalize_public_room_expires_days(expires_in_days) * _day_ms()
         room_id = _room_id()
         token = _room_token()
         conversation_id = _conversation_id()
@@ -340,12 +375,12 @@ class PublicRoomService:
             """
             INSERT INTO agent_public_rooms (
                 id, workflow_id, conversation_id, room_token_hash,
-                created_by, created_at, updated_at
+                created_by, created_at, updated_at, expires_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
             RETURNING id, workflow_id, conversation_id, room_token_hash, status,
                       running_by, running_nickname, running_started_at,
-                      created_by, version, created_at, updated_at, revoked_at
+                      created_by, version, created_at, updated_at, expires_at, revoked_at
             """,
             room_id,
             workflow_id,
@@ -353,6 +388,7 @@ class PublicRoomService:
             hash_room_token(token),
             creator_owner_id,
             now,
+            expires_at,
         )
         participant = await self.join_room(room_id, creator_owner_id, nickname, verify_existing=False)
         conv = {
@@ -393,7 +429,13 @@ class PublicRoomService:
         room_payload = self.public_room_payload(dict(room))
         return {"room": room_payload, "room_token": token, "participant": participant}
 
-    async def get_room(self, room_id: str) -> dict[str, Any] | None:
+    async def get_room(
+        self,
+        room_id: str,
+        *,
+        include_expired: bool = False,
+        include_revoked: bool = False,
+    ) -> dict[str, Any] | None:
         await self.ensure_infra()
         await self._ensure_tables()
         pool = await self._get_pool()
@@ -401,13 +443,21 @@ class PublicRoomService:
             """
             SELECT id, workflow_id, conversation_id, room_token_hash, status,
                    running_by, running_nickname, running_started_at,
-                   created_by, version, created_at, updated_at, revoked_at
+                   created_by, version, created_at, updated_at, expires_at, revoked_at
             FROM agent_public_rooms
-            WHERE id = $1 AND revoked_at IS NULL
+            WHERE id = $1
             """,
             room_id,
         )
-        return dict(room) if room else None
+        if not room:
+            return None
+        room = dict(room)
+        if not include_revoked and room.get("revoked_at"):
+            return None
+        expires_at = int(room.get("expires_at") or 0)
+        if not include_expired and expires_at <= _now_ms():
+            return None
+        return room
 
     async def verify_room_token(self, room_id: str, room_token: str) -> bool:
         room = await self.get_room(room_id)
@@ -425,24 +475,33 @@ class PublicRoomService:
             raise ValueError("nickname is required")
         pool = await self._get_pool()
         now = _now_ms()
-        if hasattr(pool, "insert_participant"):
-            participant = await pool.insert_participant(room_id, owner_id, nickname, now)
-        else:
-            participant = await pool.fetchrow(
-                """
-                INSERT INTO agent_public_room_participants (
-                    room_id, owner_id, nickname, joined_at, last_seen_at
+        await self._ensure_member_not_kicked(room_id, owner_id)
+        redis = self._get_redis()
+        lock_key = self._join_lock_key(room_id)
+        if not redis.set(lock_key, owner_id, nx=True, ex=10):
+            raise PublicRoomNicknameTakenError("Public room join is busy")
+        try:
+            await self._ensure_nickname_available(room_id, owner_id, nickname)
+            if hasattr(pool, "insert_participant"):
+                participant = await pool.insert_participant(room_id, owner_id, nickname, now)
+            else:
+                participant = await pool.fetchrow(
+                    """
+                    INSERT INTO agent_public_room_participants (
+                        room_id, owner_id, nickname, joined_at, last_seen_at
+                    )
+                    VALUES ($1, $2, $3, $4, $4)
+                    ON CONFLICT (room_id, owner_id)
+                    DO UPDATE SET nickname = $3, last_seen_at = $4
+                    RETURNING room_id, owner_id, nickname, joined_at, last_seen_at, kicked_at
+                    """,
+                    room_id,
+                    owner_id,
+                    nickname,
+                    now,
                 )
-                VALUES ($1, $2, $3, $4, $4)
-                ON CONFLICT (room_id, owner_id)
-                DO UPDATE SET nickname = $3, last_seen_at = $4
-                RETURNING room_id, owner_id, nickname, joined_at, last_seen_at
-                """,
-                room_id,
-                owner_id,
-                nickname,
-                now,
-            )
+        finally:
+            redis.delete(lock_key)
         return self.public_participant_payload(dict(participant))
 
     async def require_member(self, room_id: str, owner_id: str) -> dict[str, Any]:
@@ -451,14 +510,14 @@ class PublicRoomService:
         pool = await self._get_pool()
         participant = await pool.fetchrow(
             """
-            SELECT room_id, owner_id, nickname, joined_at, last_seen_at
+            SELECT room_id, owner_id, nickname, joined_at, last_seen_at, kicked_at
             FROM agent_public_room_participants
             WHERE room_id = $1 AND owner_id = $2
             """,
             room_id,
             owner_id,
         )
-        if not participant:
+        if not participant or participant.get("kicked_at"):
             raise PublicRoomAccessError("Public room membership is required")
         return dict(participant)
 
@@ -486,7 +545,7 @@ class PublicRoomService:
             """
             SELECT nickname, last_seen_at
             FROM agent_public_room_participants
-            WHERE room_id = $1
+            WHERE room_id = $1 AND kicked_at IS NULL
             ORDER BY last_seen_at DESC
             LIMIT 50
             """,
@@ -656,6 +715,39 @@ class PublicRoomService:
     def _lock_key(self, room_id: str) -> str:
         return f"agentclaw:public-room-lock:{room_id}"
 
+    def _join_lock_key(self, room_id: str) -> str:
+        return f"agentclaw:public-room-join-lock:{room_id}"
+
+    async def _ensure_member_not_kicked(self, room_id: str, owner_id: str) -> None:
+        pool = await self._get_pool()
+        participant = await pool.fetchrow(
+            """
+            SELECT room_id, owner_id, nickname, joined_at, last_seen_at, kicked_at
+            FROM agent_public_room_participants
+            WHERE room_id = $1 AND owner_id = $2
+            """,
+            room_id,
+            owner_id,
+        )
+        if participant and participant.get("kicked_at"):
+            raise PublicRoomAccessError("Public room member was removed")
+
+    async def _ensure_nickname_available(self, room_id: str, owner_id: str, nickname: str) -> None:
+        pool = await self._get_pool()
+        existing = await pool.fetchrow(
+            """
+            SELECT room_id, owner_id, nickname, joined_at, last_seen_at, kicked_at
+            FROM agent_public_room_participants
+            WHERE room_id = $1 AND nickname = $2
+              AND kicked_at IS NULL
+            LIMIT 1
+            """,
+            room_id,
+            nickname,
+        )
+        if existing and existing["owner_id"] != owner_id:
+            raise PublicRoomNicknameTakenError("Nickname is already used in this public room")
+
     async def acquire_run_lock(self, room_id: str, owner_id: str, nickname: str) -> dict[str, Any]:
         room = await self.get_room(room_id)
         if not room:
@@ -730,6 +822,150 @@ class PublicRoomService:
         }
 
     @staticmethod
+    def admin_room_status(room: dict[str, Any]) -> str:
+        if room.get("revoked_at"):
+            return "deleted"
+        expires_at = int(room.get("expires_at") or 0)
+        if expires_at and expires_at <= _now_ms():
+            return "expired"
+        if str(room.get("status") or "") == "running":
+            return "running"
+        return "active"
+
+    async def list_admin_rooms(
+        self,
+        *,
+        workflow_id: str = "",
+        status: str = "",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        await self.ensure_infra()
+        await self._ensure_tables()
+        pool = await self._get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT id, workflow_id, conversation_id, room_token_hash, status,
+                   running_by, running_nickname, running_started_at,
+                   created_by, version, created_at, updated_at, expires_at, revoked_at
+            FROM agent_public_rooms
+            ORDER BY updated_at DESC
+            """
+        )
+        normalized_status = str(status or "").strip()
+        rooms = []
+        for row in rows:
+            room = dict(row)
+            if workflow_id and room.get("workflow_id") != workflow_id:
+                continue
+            lifecycle_status = self.admin_room_status(room)
+            if normalized_status and lifecycle_status != normalized_status:
+                continue
+            participant_count = await pool.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM agent_public_room_participants
+                WHERE room_id = $1 AND kicked_at IS NULL
+                """,
+                room["id"],
+            )
+            rooms.append(
+                {
+                    **self.public_room_payload(room),
+                    "lifecycle_status": lifecycle_status,
+                    "participant_count": int(participant_count or 0),
+                    "revoked_at": int(room.get("revoked_at") or 0) or None,
+                }
+            )
+        total = len(rooms)
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 50), 100))
+        offset = (page - 1) * page_size
+        return {"rooms": rooms[offset : offset + page_size], "total": total, "page": page, "page_size": page_size}
+
+    async def get_admin_room_detail(self, room_id: str) -> dict[str, Any] | None:
+        room = await self.get_room(room_id, include_expired=True, include_revoked=True)
+        if not room:
+            return None
+        return {
+            "room": {
+                **self.public_room_payload(room),
+                "lifecycle_status": self.admin_room_status(room),
+                "revoked_at": int(room.get("revoked_at") or 0) or None,
+            },
+            "participants": await self.list_admin_participants(room_id),
+            "conversation": await self.get_conversation(room),
+        }
+
+    async def list_admin_participants(self, room_id: str) -> list[dict[str, Any]]:
+        await self.ensure_infra()
+        await self._ensure_tables()
+        pool = await self._get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT room_id, owner_id, nickname, joined_at, last_seen_at, kicked_at
+            FROM agent_public_room_participants
+            WHERE room_id = $1
+            ORDER BY kicked_at ASC NULLS FIRST, last_seen_at DESC
+            """,
+            room_id,
+        )
+        return [
+            {
+                "owner_id": str(row.get("owner_id") or ""),
+                "nickname": str(row.get("nickname") or ""),
+                "joined_at": int(row.get("joined_at") or 0),
+                "last_seen_at": int(row.get("last_seen_at") or 0),
+                "kicked_at": int(row.get("kicked_at") or 0) or None,
+            }
+            for row in map(dict, rows)
+        ]
+
+    async def kick_participant(self, room_id: str, owner_id: str) -> bool:
+        await self.ensure_infra()
+        await self._ensure_tables()
+        pool = await self._get_pool()
+        now = _now_ms()
+        status = await pool.execute(
+            """
+            UPDATE agent_public_room_participants
+            SET kicked_at = $3, last_seen_at = $3
+            WHERE room_id = $1 AND owner_id = $2 AND kicked_at IS NULL
+            """,
+            room_id,
+            owner_id,
+            now,
+        )
+        success = not str(status).upper().startswith("UPDATE 0")
+        if success:
+            await self._bump_room_version(room_id)
+        return success
+
+    async def revoke_room(self, room_id: str) -> bool:
+        await self.ensure_infra()
+        await self._ensure_tables()
+        redis = self._get_redis()
+        redis.delete(self._lock_key(room_id))
+        pool = await self._get_pool()
+        now = _now_ms()
+        status = await pool.execute(
+            """
+            UPDATE agent_public_rooms
+            SET revoked_at = $2,
+                status = 'idle',
+                running_by = NULL,
+                running_nickname = NULL,
+                running_started_at = NULL,
+                version = version + 1,
+                updated_at = $2
+            WHERE id = $1 AND revoked_at IS NULL
+            """,
+            room_id,
+            now,
+        )
+        return not str(status).upper().startswith("UPDATE 0")
+
+    @staticmethod
     def public_room_payload(room: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": room["id"],
@@ -740,6 +976,7 @@ class PublicRoomService:
             "version": int(room.get("version") or 1),
             "created_at": int(room.get("created_at") or 0),
             "updated_at": int(room.get("updated_at") or 0),
+            "expires_at": int(room.get("expires_at") or 0),
         }
 
     @staticmethod

@@ -437,6 +437,13 @@ export const publicRoomsApi = {
   run: (roomId, data = {}) => publicApi.post(`/public/rooms/${encodeURIComponent(roomId)}/run`, data, { headers: publicRoomHeaders(), withCredentials: true, timeout: 0 }),
 }
 
+export const publicRoomsAdminApi = {
+  list: (params = {}) => api.get('/public-rooms', { params }),
+  get: (roomId) => api.get(`/public-rooms/${encodeURIComponent(roomId)}`),
+  delete: (roomId) => api.delete(`/public-rooms/${encodeURIComponent(roomId)}`),
+  kickParticipant: (roomId, ownerId) => api.delete(`/public-rooms/${encodeURIComponent(roomId)}/participants/${encodeURIComponent(ownerId)}`),
+}
+
 export const publicAudioApi = {
   speechToText: (workflowId, shareToken = '', file) => {
     const form = new FormData()

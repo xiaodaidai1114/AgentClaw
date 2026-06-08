@@ -390,6 +390,12 @@
           <span>昵称</span>
           <input v-model="publicRoomNickname" maxlength="24" autocomplete="nickname" autofocus />
         </label>
+        <label v-if="publicRoomDialog.mode === 'create'">
+          <span>公开时间</span>
+          <select v-model.number="publicRoomExpiresInDays">
+            <option v-for="option in publicRoomExpireOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
         <div v-if="publicRoomError" class="public-room-error">{{ publicRoomError }}</div>
         <div class="public-room-modal-actions">
           <button v-if="publicRoomDialog.mode === 'create'" type="button" class="public-room-secondary" @click="publicRoomDialog.visible = false">取消</button>
@@ -586,6 +592,12 @@ export default {
       publicRoomTyping: [],
       publicRoomJoined: false,
       publicRoomNickname: '',
+      publicRoomExpiresInDays: 7,
+      publicRoomExpireOptions: [
+        { label: '1 天', value: 1 },
+        { label: '7 天', value: 7 },
+        { label: '30 天', value: 30 },
+      ],
       publicRoomError: '',
       publicRoomSubmitting: false,
       publicRoomPollingTimer: null,
@@ -1155,6 +1167,11 @@ export default {
         message: error?.message || this.$t('agentChat.unknownError'),
       })
     },
+    formatPublicRoomDialogError(error, fallback) {
+      const code = error?.response?.data?.code
+      if (code === 'PUBLIC_ROOM_NICKNAME_TAKEN') return '该昵称已被使用'
+      return error?.response?.data?.error || error?.message || fallback
+    },
     getApprovalDefaultText(action) {
       return action === 'approve' ? this.$t('agentChat.approvalApprove') : this.$t('agentChat.approvalReject')
     },
@@ -1622,6 +1639,7 @@ export default {
     openCreatePublicRoom() {
       this.publicRoomError = ''
       this.publicRoomNickname = this.normalizePublicRoomNickname(localStorage.getItem(this.publicRoomNicknameKey()) || this.publicRoomNickname)
+      this.publicRoomExpiresInDays = 7
       this.publicRoomDialog = { visible: true, mode: 'create' }
     },
     async submitPublicRoomDialog() {
@@ -1635,7 +1653,10 @@ export default {
       this.publicRoomError = ''
       try {
         await this.ensurePublicSession()
-        const created = await publicRoomsApi.create(this.currentWorkflowId, this.shareToken, { nickname })
+        const created = await publicRoomsApi.create(this.currentWorkflowId, this.shareToken, {
+          nickname,
+          expires_in_days: this.publicRoomExpiresInDays,
+        })
         localStorage.setItem(this.publicRoomNicknameKey(), nickname)
         const room = created.room || {}
         const roomToken = created.room_token || ''
@@ -1645,7 +1666,7 @@ export default {
         await this.$router.replace({ name: 'PublicAgent', params: { id: this.currentWorkflowId }, query })
       } catch (error) {
         console.error('创建公开会话失败:', error)
-        this.publicRoomError = error.response?.data?.error || error.message || '创建公开会话失败'
+        this.publicRoomError = this.formatPublicRoomDialogError(error, '创建公开会话失败')
       } finally {
         this.publicRoomSubmitting = false
       }
@@ -1665,7 +1686,7 @@ export default {
         await this.loadPublicRoomChatMessages({ initial: true })
       } catch (error) {
         console.error('加入公开会话失败:', error)
-        this.publicRoomError = error.response?.data?.error || error.message || '加入公开会话失败'
+        this.publicRoomError = this.formatPublicRoomDialogError(error, '加入公开会话失败')
       } finally {
         this.publicRoomSubmitting = false
       }
@@ -3298,7 +3319,19 @@ export default {
   outline: none;
   appearance: none;
 }
-.public-room-modal input:focus { border-color: var(--accent-main, #3b82f6); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+.public-room-modal select {
+  width: 100%;
+  border: 1px solid var(--border-base, #e4e4e7);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-main, #18181b);
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  appearance: none;
+}
+.public-room-modal input:focus,
+.public-room-modal select:focus { border-color: var(--accent-main, #3b82f6); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 .public-room-error { color: var(--danger-main, #ef4444); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .public-room-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .public-room-secondary,

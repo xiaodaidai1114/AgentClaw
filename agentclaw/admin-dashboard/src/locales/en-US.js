@@ -37,6 +37,7 @@ export default {
     knowledgebases: 'Knowledge Bases',
     scheduler: 'Scheduler',
     channels: 'Channels',
+    publicRooms: 'Public Rooms',
     dashboard: 'Dashboard',
     settings: 'System Settings',
     expand: 'Expand navigation',

@@ -71,6 +71,7 @@ const baseMenuItems = computed(() => [
   { label: t('nav.knowledgebases'), key: '/knowledgebases', icon: '📚' },
   { label: t('nav.scheduler'), key: '/scheduler', icon: '⏰' },
   { label: t('nav.channels'), key: '/channels', icon: '📡' },
+  { label: t('nav.publicRooms'), key: '/public-rooms', icon: '💬' },
   { label: t('nav.dashboard'), key: '/dashboard', icon: '📊' },
 ])
 
@@ -95,6 +96,7 @@ const activeKey = computed(() => {
   if (path.startsWith('/workflows')) return '/workflows'
   if (path.startsWith('/scheduler')) return '/scheduler'
   if (path.startsWith('/channels')) return '/channels'
+  if (path.startsWith('/public-rooms')) return '/public-rooms'
   if (path.startsWith('/knowledgebases')) return '/knowledgebases'
   return ''
 })
