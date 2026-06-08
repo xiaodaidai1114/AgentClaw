@@ -13,7 +13,7 @@
         </div>
         <div class="mobile-header-actions">
           <button
-            v-if="!isPublicMode && conversationModels.length"
+            v-if="conversationModels.length"
             class="mobile-header-btn mobile-model-toggle"
             type="button"
             :class="{ active: showModelSelector }"
@@ -55,7 +55,7 @@
             </svg>
           </button>
         </div>
-        <div v-if="!isPublicMode && showModelSelector" class="mobile-model-dropdown" @click.stop>
+        <div v-if="conversationModels.length && showModelSelector" class="mobile-model-dropdown" @click.stop>
           <div
             v-for="m in conversationModels"
             :key="m.id"
@@ -99,13 +99,40 @@
           >{{ m.name || m.id }}</div>
         </div>
       </div>
-      <div v-else class="public-header desktop-public-header">
-        <div class="public-header-copy">
+      <div v-else class="top-bar public-header desktop-public-header">
+        <div class="top-bar-title public-header-copy">
           <h2>{{ workflowName }}</h2>
           <p v-if="workflowDesc">{{ workflowDesc }}</p>
         </div>
-        <div class="public-room-actions">
+        <div class="top-bar-actions public-header-actions">
+          <div
+            v-if="conversationModels.length"
+            class="model-selector"
+            role="button"
+            tabindex="0"
+            :aria-expanded="showModelSelector ? 'true' : 'false'"
+            @click="showModelSelector = !showModelSelector"
+            @keydown.enter.prevent="showModelSelector = !showModelSelector"
+            @keydown.space.prevent="showModelSelector = !showModelSelector"
+          >
+            <div class="model-dot"></div>
+            {{ selectedModelName }}
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
           <button v-if="!isPublicRoomMode" class="public-room-btn" type="button" @click="openCreatePublicRoom">公开多人会话</button>
+        </div>
+        <div v-if="conversationModels.length && showModelSelector" class="model-dropdown" @click.stop>
+          <div
+            v-for="m in conversationModels"
+            :key="m.id"
+            class="model-option"
+            :class="{ active: m.id === selectedModel }"
+            role="button"
+            tabindex="0"
+            @click="selectedModel = m.id; showModelSelector = false"
+            @keydown.enter.prevent="selectedModel = m.id; showModelSelector = false"
+            @keydown.space.prevent="selectedModel = m.id; showModelSelector = false"
+          >{{ m.name || m.id }}</div>
         </div>
       </div>
       <div class="messages-container" ref="messagesContainer">
@@ -940,6 +967,7 @@ export default {
         } else {
           await this.loadWorkflow()
           if (!this.workflowLoadError) await this.ensurePublicSession()
+          if (!this.workflowLoadError) await this.loadModels()
           await this.loadConversations()
         }
       } else {
@@ -1419,6 +1447,7 @@ export default {
       this.publicRoomError = ''
       try {
         await this.ensurePublicRoomSession()
+        await this.loadModels()
         const data = await publicRoomsApi.bootstrap(this.publicRoomId, this.publicRoomToken)
         this.applyWorkflowPayload(data.workflow)
         this.publicRoomJoined = !!data.joined
@@ -1457,7 +1486,11 @@ export default {
       this.ensurePublicRoomChatStarted()
       this.startPublicRoomEvents()
       if (state.conversation && Array.isArray(state.conversation.messages)) {
-        this.messages = this.normalizeAssistantMessages(withWorkflowWelcome(this, state.conversation.messages))
+        const incomingMessages = this.normalizeAssistantMessages(withWorkflowWelcome(this, state.conversation.messages))
+        const currentMessages = Array.isArray(this.messages) ? this.messages : []
+        const roomIsRunning = this.publicRoomRunInProgress || this.publicRoomState?.status === 'running' || this.isStreaming || this.workflowStatus === 'running'
+        // Polling can briefly return stale history after the local optimistic user message is shown.
+        this.messages = roomIsRunning && currentMessages.length > incomingMessages.length ? currentMessages : incomingMessages
         this.publicRoomStreamingMessageId = ''
         this.streamingContent = ''
         this.isStreaming = false
@@ -1732,13 +1765,29 @@ export default {
       } catch (e) { this.uploadAvailable = false }
     },
     async loadModels() {
-      if (this.isPublicMode) return
-      const headers = getAdminAuthHeaders()
-      if (!headers) return
       try {
         const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-        const res = await fetch(`${baseUrl}/api/models`, { headers })
-        if (handleAdminFetchAuthError(res)) return
+        let endpoint = `${baseUrl}/api/models`
+        let options = {}
+        if (this.isPublicMode) {
+          if (!this.currentWorkflowId) return
+          const headers = { 'X-AgentClaw-Public-Session': '1' }
+          if (this.isPublicRoomMode) {
+            if (!this.publicRoomId) return
+            if (this.publicRoomToken) headers['X-AgentClaw-Room-Token'] = this.publicRoomToken
+            endpoint = `${baseUrl}/api/public/rooms/${encodeURIComponent(this.publicRoomId)}/models`
+          } else {
+            if (this.shareToken) headers['X-AgentClaw-Share-Token'] = this.shareToken
+            endpoint = `${baseUrl}/api/public/workflows/${encodeURIComponent(this.currentWorkflowId)}/models`
+          }
+          options = { headers, credentials: 'same-origin' }
+        } else {
+          const headers = getAdminAuthHeaders()
+          if (!headers) return
+          options = { headers }
+        }
+        const res = await fetch(endpoint, options)
+        if (!this.isPublicMode && handleAdminFetchAuthError(res)) return
         if (res.ok) {
           const data = await res.json()
           this.models = (data.models || []).filter(isConversationModel)
@@ -2438,6 +2487,7 @@ export default {
           userInput: userMessage || null,
           inputField: this.userInputFieldName,
         })
+        if (this.selectedModel) inputs.model = this.selectedModel
         const body = {
           response_mode: 'streaming',
           inputs,
@@ -2592,7 +2642,7 @@ export default {
         humanInput: humanInputAction,
       })
       if (humanAction) inputs.__human_action__ = humanAction
-      if (!this.isPublicMode && this.selectedModel) inputs.model = this.selectedModel
+      if (this.selectedModel) inputs.model = this.selectedModel
       if (!this.isPublicMode && this.isBuiltin && !this.preFilterEnabled) inputs.__skip_filter__ = true
       const body = { workflow_id: this.currentWorkflowId, response_mode: 'streaming', conversation_id: conversationId, inputs }
       if (!this.isPublicMode) {
@@ -3142,7 +3192,7 @@ export default {
       this.messages.splice(index)
       this.updateCurrentConversation()
       // 截断后端 checkpoint
-      if (this.conversationId) {
+      if (this.conversationId && !this.isPublicMode) {
         try {
           const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
           const headers = getAdminAuthHeaders({ 'Content-Type': 'application/json' })
@@ -3150,7 +3200,11 @@ export default {
           const response = await fetch(`${baseUrl}/api/workflow/truncate`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ workflow_id: this.currentWorkflowId, conversation_id: this.conversationId, keep_count: userMsgCount }),
+            body: JSON.stringify({
+              workflow_id: this.currentWorkflowId,
+              conversation_id: this.conversationId,
+              keep_count: Math.max(0, userMsgCount - 1),
+            }),
           })
           handleAdminFetchAuthError(response)
         } catch (e) { console.error('截断消息失败:', e) }
@@ -3245,8 +3299,9 @@ export default {
 .model-option:hover { background: var(--bg-hover); }
 .model-option.active { background: var(--accent-bg); color: var(--accent-main); font-weight: 500; }
 
-.public-header { padding: 18px 24px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: center; gap: 16px; }
-.public-header-copy { min-width: 0; text-align: center; }
+.top-bar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+.public-header { justify-content: space-between; }
+.public-header-copy { min-width: 0; text-align: left; }
 .public-header h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
 .public-header p { font-size: 13px; color: var(--text-muted); margin: 0; overflow-wrap: anywhere; }
 .public-room-actions { display: flex; flex-shrink: 0; gap: 8px; }

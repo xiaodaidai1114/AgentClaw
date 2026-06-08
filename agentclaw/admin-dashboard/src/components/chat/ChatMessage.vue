@@ -7,7 +7,7 @@
         <span class="user-timestamp mono-font">{{ formatTime(msg.timestamp) }}</span>
       </div>
       <div class="message-content">
-        <div class="user-bubble-row">
+        <div class="user-bubble-row" :class="{ editing: isEditing }">
           <div class="user-bubble-stack">
             <div v-if="userDisplayName" class="user-display-name">{{ userDisplayName }}</div>
             <!-- 编辑模式 -->
@@ -705,6 +705,7 @@ export default {
 .message.user .message-bubble { background: var(--bg-user-msg, #f4f4f5); padding: 10px 16px; border-radius: 14px; border-top-right-radius: 4px; }
 
 .user-bubble-row { max-width: 100%; min-width: 0; display: flex; align-items: flex-end; gap: 4px; flex-direction: row; }
+.user-bubble-row.editing { width: 100%; justify-content: flex-end; }
 .user-bubble-stack {
   max-width: 100%;
   min-width: 0;
@@ -713,6 +714,7 @@ export default {
   align-items: flex-end;
   gap: 6px;
 }
+.user-bubble-row.editing .user-bubble-stack { width: 100%; }
 .user-display-name {
   max-width: 100%;
   color: var(--text-muted, #a1a1aa);
@@ -739,6 +741,7 @@ export default {
 }
 
 .edit-area { width: min(100%, 880px); min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.user-bubble-row.editing .edit-area { width: 100%; }
 .edit-textarea {
   width: 100%; min-height: 180px; max-height: 65vh; padding: 12px 16px; border: 1.5px solid var(--accent-main, #3b82f6);
   border-radius: 12px; font-size: 15px; line-height: 1.6; resize: vertical; outline: none; overflow-y: auto;

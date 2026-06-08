@@ -608,7 +608,7 @@ SOLVED_TURN_OUTPUT_SCHEMA = {_schema_for_prompt(SOLVED_TURN_OUTPUT_SCHEMA)}
 """
 
 PHASE_NODE_USER_PROMPT = """请处理以下玩家回合 JSON。严格读取 JSON 字段，不要把 JSON 当作玩家可见文本。
-该 JSON 必须包含 "user_input"、"session"、"reference_soups" 三个字段。
+该 JSON 按 "reference_soups"、"session"、"user_input" 排列：前面是稳定参考，后面是本轮状态和输入。
 
 {player_turn_context_json}
 """

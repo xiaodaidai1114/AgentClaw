@@ -66,7 +66,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["execution"])
 
-NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank"}
+NON_CONVERSATION_MODEL_TYPES = {"embedding", "rerank", "speech2text", "tts"}
 PUBLIC_FILE_INPUT_TYPES = {
     "Image",
     "File",
@@ -179,6 +179,60 @@ def _public_workflow_payload(workflow: Any, workflow_id: str) -> Dict[str, Any]:
         "user_input_field": user_input_field,
         "chat_audio": public_chat_audio_payload(workflow),
     }
+
+
+def _workflow_conversation_models(workflow: Any) -> tuple[list[dict[str, str]], Optional[str]]:
+    if hasattr(workflow, "_ensure_components"):
+        workflow._ensure_components()
+    llm_manager = getattr(workflow, "_llm_manager", None)
+    if hasattr(llm_manager, "llm_manager"):
+        llm_manager = llm_manager.llm_manager
+    if llm_manager is None:
+        return [], None
+
+    configs = getattr(llm_manager, "_models_cache", {}) or {}
+    model_ids = list(getattr(llm_manager, "model_ids", []) or configs.keys())
+    models: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for model_id in model_ids:
+        if model_id in seen:
+            continue
+        config = configs.get(model_id)
+        model_type = str((config.model_type if config else "chat") or "chat").strip().lower()
+        if model_type in NON_CONVERSATION_MODEL_TYPES:
+            continue
+        seen.add(model_id)
+        models.append({"id": model_id, "name": model_id, "type": model_type})
+
+    default_model_id = getattr(llm_manager, "default_id", None)
+    if default_model_id not in {model["id"] for model in models}:
+        default_model_id = models[0]["id"] if models else None
+    return models, default_model_id
+
+
+def _apply_request_model_selection(workflow: Any, input_data: Dict[str, Any], context: Any) -> None:
+    # 从 inputs 中读取 model，作为本次请求的模型选择。
+    # 仅影响未显式指定 model_id 的 LLM 节点，避免修改全局 _current_model_id 泄漏到后续请求。
+    selected_model = input_data.get("model")
+    if not selected_model:
+        return
+    if hasattr(workflow, '_ensure_components'):
+        workflow._ensure_components()
+    mgr = getattr(workflow, '_llm_manager', None)
+    # 解包 TracedLLMManager，读取底层 LLMManager 配置
+    if hasattr(mgr, 'llm_manager'):
+        mgr = mgr.llm_manager
+    if not mgr:
+        return
+    selected_config = mgr._models_cache.get(selected_model)
+    selected_type = str(getattr(selected_config, "model_type", "chat") or "chat").lower()
+    if selected_config and selected_type not in NON_CONVERSATION_MODEL_TYPES:
+        context.runtime_model_id = selected_model
+        logger.info(f"请求级模型选择: {selected_model}")
+    elif selected_config:
+        logger.warning(f"模型 '{selected_model}' 类型为 {selected_type}，不能用于对话模型切换")
+    else:
+        logger.warning(f"模型 '{selected_model}' 不在配置中, 可用: {list(mgr._models_cache.keys())}")
 
 
 def _normalize_user_and_inputs(
@@ -371,6 +425,25 @@ async def get_public_workflow(workflow_id: str, request: Request):
     if share_error:
         return share_error
     return {"workflow": _public_workflow_payload(workflow, workflow_id)}
+
+
+@router.get(
+    "/public/workflows/{workflow_id}/models",
+    summary="List anonymous public workflow models",
+    description="Return conversation models available to a public workflow page.",
+)
+async def list_public_workflow_models(workflow_id: str, request: Request):
+    """List conversation models for a public workflow after public access validation."""
+    from agentclaw.api.registry import WorkflowRegistry
+
+    workflow = WorkflowRegistry.get(workflow_id)
+    if not workflow:
+        return _workflow_not_found_response(workflow_id)
+    share_error = verify_public_share_token(workflow, workflow_id, request, allow_square_public=True)
+    if share_error:
+        return share_error
+    models, default_model_id = _workflow_conversation_models(workflow)
+    return {"models": models, "default_model_id": default_model_id}
 
 
 @router.post(
@@ -661,26 +734,7 @@ async def _run_workflow_request(
     context.workflow_id = workflow_id
     context.user_input_field = user_input_field
 
-    # 从 inputs 中读取 model，作为本次请求的模型选择。
-    # 仅影响未显式指定 model_id 的 LLM 节点，避免修改全局 _current_model_id 泄漏到后续请求。
-    selected_model = None if public_mode else input_data.get("model")
-    if selected_model:
-        if hasattr(workflow, '_ensure_components'):
-            workflow._ensure_components()
-        mgr = getattr(workflow, '_llm_manager', None)
-        # 解包 TracedLLMManager，读取底层 LLMManager 配置
-        if hasattr(mgr, 'llm_manager'):
-            mgr = mgr.llm_manager
-        if mgr:
-            selected_config = mgr._models_cache.get(selected_model)
-            selected_type = str(getattr(selected_config, "model_type", "chat") or "chat").lower()
-            if selected_config and selected_type not in NON_CONVERSATION_MODEL_TYPES:
-                context.runtime_model_id = selected_model
-                logger.info(f"请求级模型选择: {selected_model}")
-            elif selected_config:
-                logger.warning(f"模型 '{selected_model}' 类型为 {selected_type}，不能用于对话模型切换")
-            else:
-                logger.warning(f"模型 '{selected_model}' 不在配置中, 可用: {list(mgr._models_cache.keys())}")
+    _apply_request_model_selection(workflow, input_data, context)
 
     if is_stream:
         return StreamingResponse(

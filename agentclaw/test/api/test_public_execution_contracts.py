@@ -948,6 +948,56 @@ def test_anonymous_public_workflow_metadata_requires_share_token_even_with_same_
     assert response.json()["code"] == "FORBIDDEN"
 
 
+def test_anonymous_public_workflow_models_require_share_token_and_hide_non_chat_models(
+    public_api_client,
+    monkeypatch,
+):
+    from agentclaw.api.registry import WorkflowRegistry
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _llm_manager = SimpleNamespace(
+            default_id="chat-main",
+            model_ids=["chat-main", "embed-small", "rerank-fast", "asr-main", "tts-main", "chat-alt"],
+            _models_cache={
+                "chat-main": SimpleNamespace(model_type="chat"),
+                "embed-small": SimpleNamespace(model_type="embedding"),
+                "rerank-fast": SimpleNamespace(model_type="rerank"),
+                "asr-main": SimpleNamespace(model_type="speech2text"),
+                "tts-main": SimpleNamespace(model_type="tts"),
+                "chat-alt": SimpleNamespace(model_type="chat"),
+            },
+        )
+
+    monkeypatch.setattr(
+        WorkflowRegistry,
+        "get",
+        classmethod(lambda cls, workflow_id: FakeWorkflow() if workflow_id == "wf-public" else None),
+    )
+
+    missing_token = public_api_client.get(
+        "/api/public/workflows/wf-public/models",
+        headers=_public_page_headers(),
+    )
+    response = public_api_client.get(
+        "/api/public/workflows/wf-public/models?share_token=share-test",
+        headers=_public_page_headers(),
+    )
+
+    assert missing_token.status_code == 403
+    assert missing_token.json()["code"] == "FORBIDDEN"
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": [
+            {"id": "chat-main", "name": "chat-main", "type": "chat"},
+            {"id": "chat-alt", "name": "chat-alt", "type": "chat"},
+        ],
+        "default_model_id": "chat-main",
+    }
+
+
 def test_anonymous_public_workflow_run_requires_same_origin_page_session(
     public_api_client,
     monkeypatch,
@@ -2170,6 +2220,8 @@ def test_workflow_run_blocking_exception_returns_dify_error_payload(
         ("chat-model", "chat", "chat-model"),
         ("embed-model", "embedding", None),
         ("rerank-model", "rerank", None),
+        ("asr-model", "speech2text", None),
+        ("tts-model", "tts", None),
     ],
 )
 def test_workflow_run_request_model_selection_is_scoped_to_chat_models(
@@ -2233,6 +2285,68 @@ def test_workflow_run_request_model_selection_is_scoped_to_chat_models(
     assert captured["ensure_components_called"] is True
     assert captured["runtime_model_id"] == expected_runtime_model
     assert captured["inputs"]["model"] == selected_model
+
+
+def test_public_workflow_run_accepts_request_model_selection(
+    public_api_client,
+    monkeypatch,
+):
+    import agentclaw.database
+    from agentclaw.api.registry import WorkflowRegistry
+
+    captured: dict[str, object] = {}
+
+    class FakeWorkflow:
+        id = "wf-public"
+        public_share_enabled = True
+        public_share_token = "share-test"
+        _input_schema = None
+        _llm_manager = SimpleNamespace(
+            _models_cache={
+                "chat-alt": SimpleNamespace(model_type="chat"),
+            }
+        )
+
+        def get_user_input_field(self):
+            return "prompt"
+
+        def _ensure_components(self):
+            captured["ensure_components_called"] = True
+
+        async def run(self, *, inputs, context, thread_id):
+            captured["runtime_model_id"] = context.runtime_model_id
+            captured["inputs"] = dict(inputs)
+            return {
+                "state": {
+                    "__messages__": [{"role": "assistant", "content": "ok"}],
+                    "__status__": "completed",
+                },
+                "metadata": {},
+            }
+
+    async def process_file_inputs(input_data, workflow_inputs):
+        return input_data
+
+    monkeypatch.setattr(WorkflowRegistry, "get", classmethod(lambda cls, workflow_id: FakeWorkflow()))
+    monkeypatch.setattr(agentclaw.database, "process_file_inputs", process_file_inputs)
+
+    session = _open_public_session(public_api_client, "wf-public")
+    assert session.status_code == 200
+    response = public_api_client.post(
+        "/api/public/workflows/wf-public/run?share_token=share-test",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "blocking",
+            "user": "hello",
+            "inputs": {"model": "chat-alt"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "ok"
+    assert captured["ensure_components_called"] is True
+    assert captured["runtime_model_id"] == "chat-alt"
+    assert captured["inputs"]["model"] == "chat-alt"
 
 
 def test_confirm_action_requires_admin_and_resolves_sudo_confirmation(

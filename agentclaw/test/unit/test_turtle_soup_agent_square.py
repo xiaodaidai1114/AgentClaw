@@ -408,6 +408,18 @@ def test_turtle_soup_prepare_turn_clears_stale_node_results():
     assert prepared["judge_question"] == module.prompt_contracts.CLEARED_PHASE_RESULT
 
 
+def test_turtle_soup_prepare_turn_puts_stable_reference_before_dynamic_turn_data():
+    module = _load_turtle_soup_module()
+
+    prepared = module.prepare_turn({"user_input": "我想玩反转强一点的"})
+    context_json = prepared["player_turn_context_json"]
+
+    assert context_json.index('"reference_soups"') < context_json.index('"session"')
+    assert context_json.index('"session"') < context_json.index('"user_input"')
+    parsed = json.loads(context_json)
+    assert list(parsed.keys()) == ["reference_soups", "session", "user_input"]
+
+
 @pytest.mark.asyncio
 async def test_turtle_soup_render_reply_ignores_cleared_stale_answer(monkeypatch):
     module = _load_turtle_soup_module()
@@ -472,6 +484,64 @@ async def test_turtle_soup_render_reply_records_user_turn_history(monkeypatch):
     assert history[-1]["reply"] == "否"
     assert result[module.SESSION_STATE_KEY]["last_feedback"] == "否"
     assert result[module.SESSION_STATE_KEY]["question_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_turtle_soup_render_reply_clears_old_round_when_restarting_after_solved(monkeypatch):
+    module = _load_turtle_soup_module()
+
+    async def fake_output(content, **kwargs):
+        return None
+
+    monkeypatch.setattr(module, "output", fake_output)
+    solved_session = module._coerce_session({
+        "phase": "solved",
+        "soup_type": "旧类型",
+        "difficulty": "困难",
+        "soup_surface": "旧汤面",
+        "soup_solution": "旧汤底",
+        "truth_facts": ["旧真相"],
+        "known_facts": ["旧已知"],
+        "open_threads": ["旧线索"],
+        "question_count": 7,
+        "hint_count": 2,
+        "answer_attempt_count": 3,
+        "last_feedback": "旧反馈",
+        "turn_history": [
+            {
+                "user_input": "旧问题",
+                "intent": "question_judgement",
+                "reply": "是",
+                "verdict": "是",
+            }
+        ],
+    })
+
+    result = await module.render_reply({
+        "user_input": "再来一题，想玩校园反转",
+        "session": solved_session,
+        "solved_turn": {
+            "reply": "可以，下一题想玩什么类型？",
+            "phase": "choose_type",
+            "intent": "restart",
+            "session": solved_session,
+        },
+    })
+    next_session = result[module.SESSION_STATE_KEY]
+
+    assert next_session["phase"] == "choose_type"
+    assert next_session["difficulty"] == ""
+    assert next_session["soup_surface"] == ""
+    assert next_session["soup_solution"] == ""
+    assert next_session["truth_facts"] == []
+    assert next_session["known_facts"] == []
+    assert next_session["open_threads"] == []
+    assert next_session["question_count"] == 0
+    assert next_session["hint_count"] == 0
+    assert next_session["answer_attempt_count"] == 0
+    assert [item["user_input"] for item in next_session["turn_history"]] == [
+        "再来一题，想玩校园反转",
+    ]
 
 
 @pytest.mark.asyncio

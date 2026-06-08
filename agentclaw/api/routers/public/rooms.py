@@ -15,9 +15,11 @@ from agentclaw.api.routers.public.access import (
     workflow_not_found_response,
 )
 from agentclaw.api.routers.public.execution import (
+    _apply_request_model_selection,
     _normalize_user_and_inputs,
     _public_input_size_error,
     _public_request_body_error,
+    _workflow_conversation_models,
 )
 from agentclaw.api.routers.public.session import (
     PUBLIC_SESSION_COOKIE,
@@ -322,6 +324,27 @@ async def bootstrap_public_room(room_id: str, request: Request):
         return _service_error_response(exc)
 
 
+@router.get("/public/rooms/{room_id}/models", summary="List public room workflow models")
+async def list_public_room_models(room_id: str, request: Request):
+    service = get_public_room_service()
+    try:
+        room = await service.get_room(room_id)
+        if not room:
+            return JSONResponse(status_code=404, content={"error": "Public room not found", "code": ErrorCode.NOT_FOUND})
+        if not verify_public_page_session(request, room["workflow_id"]):
+            return forbidden_response("Public room access requires a same-origin public page session")
+        room_token = request.headers.get("x-agentclaw-room-token", "")
+        if not await service.verify_room_token(room_id, room_token):
+            return forbidden_response("Public room token is required")
+        workflow = _get_workflow(room["workflow_id"])
+        if not workflow:
+            return workflow_not_found_response(room["workflow_id"])
+        models, default_model_id = _workflow_conversation_models(workflow)
+        return {"models": models, "default_model_id": default_model_id}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @router.post("/public/rooms/{room_id}/join", summary="Join a public room")
 async def join_public_room(room_id: str, request: Request, req: PublicRoomJoinRequest):
     service = get_public_room_service()
@@ -543,6 +566,7 @@ async def run_public_room(room_id: str, request: Request):
         )
         context.workflow_id = room["workflow_id"]
         context.user_input_field = user_input_field
+        _apply_request_model_selection(workflow, workflow_input_data, context)
         start_time = time.perf_counter()
         task_id = str(uuid.uuid4())
         message_id = str(uuid.uuid4())

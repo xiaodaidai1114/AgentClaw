@@ -651,6 +651,49 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.publicRoomChatOpen).toBe(true)
   })
 
+  it('sends the selected model through public room workflow runs', async () => {
+    const runSpy = vi.spyOn(publicRoomsApi, 'run').mockResolvedValue({})
+    vi.spyOn(publicRoomsApi, 'typing').mockResolvedValue({})
+    vi.spyOn(publicRoomsApi, 'state').mockResolvedValue({ room: {}, participants: [], typing: [] })
+    const ctx = {
+      isPublicRoomMode: true,
+      publicRoomJoined: true,
+      publicRoomBusy: false,
+      inputText: 'hello',
+      inputError: '',
+      userInputFieldName: 'question',
+      formData: {},
+      selectedModel: 'chat-alt',
+      messages: [],
+      publicRoomNickname: '玩家A',
+      publicRoomId: 'room-1',
+      currentPromptTokens: 0,
+      currentCompletionTokens: 0,
+      currentToolCalls: [],
+      nodeSteps: [],
+      todoItems: [],
+      reasoningContent: '',
+      streamingContent: '',
+      workflowStatus: 'idle',
+      validateInput: vi.fn(),
+      validateFormData: vi.fn(() => true),
+      scrollToBottom: vi.fn(),
+      saveFormCache: vi.fn(),
+      applyPublicRoomState: vi.fn(),
+      $nextTick: (fn) => fn(),
+      $refs: {},
+      $t: (key) => key,
+    }
+
+    await AgentChat.methods.runPublicRoomMessage.call(ctx)
+
+    expect(runSpy).toHaveBeenCalledTimes(1)
+    expect(runSpy.mock.calls[0][1].inputs).toMatchObject({
+      question: 'hello',
+      model: 'chat-alt',
+    })
+  })
+
   it('keeps the public room prompt draft editable while the agent is running', () => {
     const ctx = {
       workflowLoadError: '',
@@ -751,6 +794,121 @@ describe('AgentChat conversation runtime state', () => {
     expect(ctx.thinkingStatus).toBe(null)
     expect(ctx.streamingContent).toBe('answer')
     expect(ctx.messages).toEqual([{ role: 'user', content: 'hello' }])
+  })
+
+  it('keeps optimistic public room messages when polling returns stale history during a run', () => {
+    const localMessages = [
+      { role: 'assistant', content: '开场' },
+      {
+        role: 'user',
+        content: '这是我的问题',
+        timestamp: 1710000000000,
+        sender_type: 'public_room_participant',
+        sender: { nickname: '玩家A' },
+      },
+    ]
+    const ctx = {
+      isPublicRoomMode: true,
+      publicRoomId: 'room-1',
+      publicRoomJoined: true,
+      publicRoomState: { status: 'running' },
+      publicRoomLastVersion: 1,
+      publicRoomRunInProgress: true,
+      workflowStatus: 'running',
+      isStreaming: true,
+      streamingContent: '',
+      conversationId: 'conv-room',
+      conversations: [{ id: 'conv-room', messages: localMessages }],
+      messages: localMessages,
+      ensurePublicRoomChatStarted: vi.fn(),
+      startPublicRoomEvents: vi.fn(),
+      applyPublicRoomShell: AgentChat.methods.applyPublicRoomShell,
+      saveConversationsToLocal: vi.fn(),
+      normalizeAssistantMessages: AgentChat.methods.normalizeAssistantMessages,
+      extractPostEditGuardMeta: AgentChat.methods.extractPostEditGuardMeta,
+      scrollToBottom: vi.fn(),
+      $t: (key) => key,
+    }
+
+    AgentChat.methods.applyPublicRoomState.call(ctx, {
+      room: { id: 'room-1', conversation_id: 'conv-room', status: 'running', version: 2 },
+      participants: [],
+      typing: [],
+      conversation: {
+        messages: [{ role: 'assistant', content: '开场' }],
+      },
+    })
+
+    expect(ctx.messages).toEqual(localMessages)
+    expect(ctx.conversations[0].messages).toEqual(localMessages)
+  })
+
+  it('truncates checkpoint before the edited user message before retrying', async () => {
+    const originalFetch = global.fetch
+    const requests = []
+    setAdminToken('admin-token')
+    global.fetch = vi.fn(async (_url, options) => {
+      requests.push(JSON.parse(options.body))
+      return { ok: true, status: 200 }
+    })
+    const ctx = {
+      isStreaming: false,
+      messages: [
+        { role: 'user', content: '第一句' },
+        { role: 'assistant', content: '第一次回复' },
+        { role: 'user', content: '旧的第二句' },
+        { role: 'assistant', content: '旧的第二次回复' },
+      ],
+      conversationId: 'conv-1',
+      currentWorkflowId: 'workflow-1',
+      inputText: '',
+      updateCurrentConversation: vi.fn(),
+      sendMessage: vi.fn(),
+      $nextTick: (fn) => fn(),
+    }
+
+    try {
+      await AgentChat.methods.editMessage.call(ctx, ctx.messages[2], 2, '新的第二句')
+    } finally {
+      global.fetch = originalFetch
+      clearAdminToken()
+    }
+
+    expect(requests[0]).toMatchObject({
+      workflow_id: 'workflow-1',
+      conversation_id: 'conv-1',
+      keep_count: 1,
+    })
+    expect(ctx.messages).toEqual([
+      { role: 'user', content: '第一句' },
+      { role: 'assistant', content: '第一次回复' },
+    ])
+    expect(ctx.inputText).toBe('新的第二句')
+    expect(ctx.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries edited public messages even when admin truncate is unavailable', async () => {
+    clearAdminToken()
+    const ctx = {
+      isStreaming: false,
+      isPublicMode: true,
+      messages: [
+        { role: 'user', content: '旧问题' },
+        { role: 'assistant', content: '旧回复' },
+      ],
+      conversationId: 'conv-public',
+      currentWorkflowId: 'workflow-1',
+      inputText: '',
+      updateCurrentConversation: vi.fn(),
+      sendMessage: vi.fn(),
+      $nextTick: (fn) => fn(),
+    }
+
+    await AgentChat.methods.editMessage.call(ctx, ctx.messages[0], 0, '新问题')
+
+    expect(ctx.messages).toEqual([])
+    expect(ctx.inputText).toBe('新问题')
+    expect(ctx.sendMessage).toHaveBeenCalledTimes(1)
   })
 
   it('applies public room node events as safe process summaries', () => {
@@ -1334,7 +1492,7 @@ describe('AgentChat conversation runtime state', () => {
 
   it('keeps a single visible desktop copy link action in public room mode', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
-    const desktopHeader = source.match(/<div v-else class="public-header desktop-public-header">([\s\S]*?)<\/div>\s*<\/div>\s*<div class="messages-container"/)?.[1] || ''
+    const desktopHeader = source.match(/<div v-else class="top-bar public-header desktop-public-header">([\s\S]*?)<\/div>\s*<\/div>\s*<div class="messages-container"/)?.[1] || ''
     const roomBar = source.match(/<div v-if="isPublicRoomMode" class="public-room-bar">([\s\S]*?)<\/div>\s*<div v-if="hasFormFields"/)?.[1] || ''
 
     expect(desktopHeader).not.toContain('复制房间链接')
@@ -1349,6 +1507,29 @@ describe('AgentChat conversation runtime state', () => {
     expect(styleMatch?.[1] || '').toContain('border: none')
     expect(styleMatch?.[1] || '').not.toContain('border: 1px')
     expect(styleMatch?.[1] || '').not.toContain('background: transparent')
+  })
+
+  it('keeps edited user history messages from inheriting compact bubble width', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatMessage.vue'), 'utf8')
+    const editingRow = source.match(/\.user-bubble-row\.editing\s*\{([\s\S]*?)\}/)?.[1] || ''
+    const editingStack = source.match(/\.user-bubble-row\.editing\s+\.user-bubble-stack\s*\{([\s\S]*?)\}/)?.[1] || ''
+    const editingArea = source.match(/\.user-bubble-row\.editing\s+\.edit-area\s*\{([\s\S]*?)\}/)?.[1] || ''
+
+    expect(source).toContain(':class="{ editing: isEditing }"')
+    expect(editingRow).toContain('width: 100%')
+    expect(editingRow).toContain('justify-content: flex-end')
+    expect(editingStack).toContain('width: 100%')
+    expect(editingArea).toContain('width: 100%')
+  })
+
+  it('shows model switchers on public agent and public room pages', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/AgentChat.vue'), 'utf8')
+
+    expect(source).toContain('<div v-else class="top-bar public-header desktop-public-header">')
+    expect(source).toContain('class="top-bar-actions public-header-actions"')
+    expect(source).toContain('v-if="conversationModels.length"')
+    expect(source).toContain('class="model-selector"')
+    expect(source).not.toContain('public-model-selector')
   })
 
   it('keeps public room inputs and secondary action opaque', () => {
@@ -1562,6 +1743,59 @@ describe('AgentChat conversation runtime state', () => {
     expect(JSON.parse(options.body).files).toBeUndefined()
   })
 
+  it('sends the selected model through public workflow runs', async () => {
+    const fetchCalls = []
+    vi.stubGlobal('fetch', vi.fn(async (...args) => {
+      fetchCalls.push(args)
+      return {
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: true }),
+          }),
+        },
+      }
+    }))
+
+    const ctx = {
+      isPublicMode: true,
+      publicSessionReady: true,
+      ensurePublicSession: vi.fn(async () => {}),
+      formData: {},
+      userInputFieldName: 'question',
+      selectedModel: 'chat-alt',
+      isBuiltin: false,
+      preFilterEnabled: true,
+      toolConfirmationRequired: false,
+      toolConfirmationLevel: 'off',
+      attachedFiles: [],
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      conversationId: 'conversation-1',
+      abortController: null,
+      streamEndedByWorkflowEvent: false,
+      workflowStatus: 'finished',
+      streamingContent: '',
+      currentToolCalls: [],
+      nodeSteps: [],
+      reasoningContent: '',
+      approvalMode: false,
+      handleSseLine: () => {},
+    }
+
+    try {
+      await AgentChat.methods.streamRequest.call(ctx, 'hello')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    const body = JSON.parse(fetchCalls[0][1].body)
+    expect(body.inputs).toMatchObject({
+      question: 'hello',
+      model: 'chat-alt',
+    })
+  })
+
   it('formats public safety guard stream errors without exposing raw HTTP JSON', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: false,
@@ -1730,6 +1964,9 @@ describe('AgentChat conversation runtime state', () => {
       ensurePublicSession: vi.fn(async () => {
         order.push('session')
       }),
+      loadModels: vi.fn(async () => {
+        order.push('models')
+      }),
       loadConversations: vi.fn(async () => {
         order.push('conversations')
       }),
@@ -1737,7 +1974,7 @@ describe('AgentChat conversation runtime state', () => {
 
     await AgentChat.mounted.call(ctx)
 
-    expect(order.slice(0, 3)).toEqual(['workflow', 'session', 'conversations'])
+    expect(order.slice(0, 4)).toEqual(['workflow', 'session', 'models', 'conversations'])
   })
 
   it('prompts for admin auth instead of calling protected upload status without a token', async () => {
@@ -1791,6 +2028,90 @@ describe('AgentChat conversation runtime state', () => {
 
     expect(localStorage.getItem('admin_token')).toBe(null)
     expect(authEvents).toEqual(['required'])
+  })
+
+  it('loads public model choices through the public workflow endpoint', async () => {
+    const fetchCalls = []
+    vi.stubGlobal('fetch', vi.fn(async (...args) => {
+      fetchCalls.push(args)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            { id: 'chat-main', name: 'Main', type: 'chat' },
+            { id: 'chat-alt', name: 'Alt', type: 'chat' },
+          ],
+          default_model_id: 'chat-alt',
+        }),
+      }
+    }))
+    const ctx = {
+      isPublicMode: true,
+      currentWorkflowId: 'workflow-1',
+      shareToken: 'share-token',
+      models: [],
+      selectedModel: '',
+    }
+
+    try {
+      await AgentChat.methods.loadModels.call(ctx)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    const [url, options] = fetchCalls[0]
+    expect(url).toBe('/api/public/workflows/workflow-1/models')
+    expect(options.credentials).toBe('same-origin')
+    expect(options.headers.Authorization).toBeUndefined()
+    expect(options.headers['X-AgentClaw-Public-Session']).toBe('1')
+    expect(options.headers['X-AgentClaw-Share-Token']).toBe('share-token')
+    expect(ctx.models.map((model) => model.id)).toEqual(['chat-main', 'chat-alt'])
+    expect(ctx.selectedModel).toBe('chat-alt')
+  })
+
+  it('loads public room model choices through the public room endpoint', async () => {
+    const fetchCalls = []
+    vi.stubGlobal('fetch', vi.fn(async (...args) => {
+      fetchCalls.push(args)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            { id: 'chat-main', name: 'Main', type: 'chat' },
+            { id: 'chat-alt', name: 'Alt', type: 'chat' },
+          ],
+          default_model_id: 'chat-main',
+        }),
+      }
+    }))
+    const ctx = {
+      isPublicMode: true,
+      isPublicRoomMode: true,
+      currentWorkflowId: 'workflow-1',
+      publicRoomId: 'room-1',
+      publicRoomToken: 'room-token',
+      shareToken: '',
+      models: [],
+      selectedModel: '',
+    }
+
+    try {
+      await AgentChat.methods.loadModels.call(ctx)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    const [url, options] = fetchCalls[0]
+    expect(url).toBe('/api/public/rooms/room-1/models')
+    expect(options.credentials).toBe('same-origin')
+    expect(options.headers.Authorization).toBeUndefined()
+    expect(options.headers['X-AgentClaw-Public-Session']).toBe('1')
+    expect(options.headers['X-AgentClaw-Room-Token']).toBe('room-token')
+    expect(options.headers['X-AgentClaw-Share-Token']).toBeUndefined()
+    expect(ctx.models.map((model) => model.id)).toEqual(['chat-main', 'chat-alt'])
+    expect(ctx.selectedModel).toBe('chat-main')
   })
 
   it('does not fetch unknown public conversations from the server', async () => {

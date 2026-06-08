@@ -385,6 +385,7 @@ def _install_public_workflow(monkeypatch, rate_limit=None, llm_manager=None):
         def __init__(self):
             self.run_calls = 0
             self.run_inputs = []
+            self.run_runtime_model_ids = []
 
         def get_input_schema(self):
             return None
@@ -398,6 +399,7 @@ def _install_public_workflow(monkeypatch, rate_limit=None, llm_manager=None):
         async def run(self, *, inputs, context, thread_id):
             self.run_calls += 1
             self.run_inputs.append(dict(inputs))
+            self.run_runtime_model_ids.append(getattr(context, "runtime_model_id", None))
             if context.request_stream:
                 from agentclaw.runtime.streaming.context import get_output_channel
 
@@ -557,6 +559,71 @@ def test_public_room_create_join_state_typing_and_sanitized_messages(public_api_
     assert "secret-result" not in serialized
     assert "owner_id" not in serialized
     assert "room_token" not in serialized
+
+
+def test_public_room_models_require_room_token_and_hide_non_chat_models(public_api_client, monkeypatch):
+    manager = SimpleNamespace(
+        default_id="chat-main",
+        model_ids=["chat-main", "embed-small", "rerank-fast", "asr-main", "tts-main", "chat-alt"],
+        _models_cache={
+            "chat-main": SimpleNamespace(model_type="chat"),
+            "embed-small": SimpleNamespace(model_type="embedding"),
+            "rerank-fast": SimpleNamespace(model_type="rerank"),
+            "asr-main": SimpleNamespace(model_type="speech2text"),
+            "tts-main": SimpleNamespace(model_type="tts"),
+            "chat-alt": SimpleNamespace(model_type="chat"),
+        },
+    )
+    _install_public_workflow(monkeypatch, llm_manager=manager)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    missing_token = public_api_client.get(
+        f"/api/public/rooms/{room['id']}/models",
+        headers=_public_page_headers(),
+    )
+    response = public_api_client.get(
+        f"/api/public/rooms/{room['id']}/models",
+        headers=_public_page_headers({"x-agentclaw-room-token": created["room_token"]}),
+    )
+
+    assert missing_token.status_code == 403
+    assert missing_token.json()["code"] == "FORBIDDEN"
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": [
+            {"id": "chat-main", "name": "chat-main", "type": "chat"},
+            {"id": "chat-alt", "name": "chat-alt", "type": "chat"},
+        ],
+        "default_model_id": "chat-main",
+    }
+
+
+def test_public_room_run_accepts_request_model_selection(public_api_client, monkeypatch):
+    manager = SimpleNamespace(
+        _models_cache={
+            "chat-alt": SimpleNamespace(model_type="chat"),
+        }
+    )
+    workflow = _install_public_workflow(monkeypatch, llm_manager=manager)
+    _install_infra(monkeypatch)
+
+    created = _create_room(public_api_client)
+    room = created["room"]
+    response = public_api_client.post(
+        f"/api/public/rooms/{room['id']}/run",
+        headers=_public_page_headers(),
+        json={
+            "response_mode": "streaming",
+            "user": "hello",
+            "inputs": {"question": "hello", "model": "chat-alt"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert workflow.run_inputs[-1]["model"] == "chat-alt"
+    assert workflow.run_runtime_model_ids[-1] == "chat-alt"
 
 
 def test_public_room_create_includes_expiry_and_rejects_over_30_days(public_api_client, monkeypatch):

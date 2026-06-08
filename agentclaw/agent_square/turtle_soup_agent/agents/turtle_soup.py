@@ -110,6 +110,38 @@ def _fallback_reply_for_phase(phase: str) -> str:
     return "你可以继续提问、给出答案，或者说“给我一点提示”。"
 
 
+def _reset_session_for_next_round(
+    candidate_session: dict[str, Any],
+    previous_session: dict[str, Any],
+    phase: str,
+) -> dict[str, Any]:
+    session = _empty_session()
+    session["phase"] = (
+        phase if phase in {"choose_type", "await_soup_confirmation"} else "choose_type"
+    )
+
+    soup_type = candidate_session.get("soup_type")
+    if (
+        isinstance(soup_type, str)
+        and soup_type.strip()
+        and soup_type != previous_session.get("soup_type")
+    ):
+        session["soup_type"] = soup_type
+
+    if session["phase"] == "await_soup_confirmation":
+        for key in [
+            "difficulty",
+            "soup_surface",
+            "soup_solution",
+            "truth_facts",
+            "open_threads",
+        ]:
+            value = candidate_session.get(key)
+            if value and value != previous_session.get(key):
+                session[key] = value
+    return session
+
+
 def _normalize_phase_result(raw: Any, previous_session: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         phase = previous_session.get("phase", "choose_type")
@@ -136,6 +168,14 @@ def _normalize_phase_result(raw: Any, previous_session: dict[str, Any]) -> dict[
         judgement = None
 
     intent = str(raw.get("intent") or "irrelevant_reply")
+    if (
+        previous_session.get("phase") == "solved"
+        and intent in {"restart", "type_choice"}
+        and phase in {"choose_type", "await_soup_confirmation"}
+    ):
+        session = _reset_session_for_next_round(session, previous_session, phase)
+        phase = session["phase"]
+
     reply = str(raw.get("reply") or "").strip()
     if (intent == "question_judgement" or "verdict" in raw) and judgement:
         intent = "question_judgement"
@@ -276,9 +316,9 @@ def prepare_turn(state: dict[str, Any]) -> dict[str, Any]:
         "reference_soups": reference_soups,
         "player_turn_context_json": _json_for_prompt(
             {
-                "user_input": state.get("user_input", ""),
-                "session": session,
                 "reference_soups": reference_soups,
+                "session": session,
+                "user_input": state.get("user_input", ""),
             }
         ),
     }
