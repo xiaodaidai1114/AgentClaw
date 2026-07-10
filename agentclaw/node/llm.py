@@ -1136,7 +1136,7 @@ class LLMNode(BaseNode):
                         async for item in context.llm_manager.stream_with_tools(
                             messages,
                             tools=tool_schemas,
-                            tool_choice="required" if force_tool_continue else self.tool_choice,
+                            tool_choice="required" if force_tool_continue else (self.tool_choice if self.tool_choice != "auto" else None),
                             model_id=effective_model_id,
                             images=images,
                             push_to_context=self.output_to_user and not force_tool_continue,
@@ -1350,7 +1350,7 @@ class LLMNode(BaseNode):
                         model_id=effective_model_id,
                         images=images,
                         tools=tool_schemas,
-                        tool_choice="required" if (tool_schemas and force_tool_continue) else (self.tool_choice if tool_schemas else None),
+                        tool_choice="required" if (tool_schemas and force_tool_continue) else ((self.tool_choice if self.tool_choice != "auto" else None) if tool_schemas else None),
                         **invoke_params
                     )
 

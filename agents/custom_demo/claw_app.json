@@ -1,0 +1,18 @@
+{
+  "id": "custom_demo",
+  "name": "08 数据报告生成器",
+  "description": "自定义节点示例：Python 解析数据，LLM 生成分析，CustomNode 格式化报告。",
+  "tags": [
+    "示例",
+    "自定义节点",
+    "数据分析",
+    "报告"
+  ],
+  "entry": "agents/custom_demo.py",
+  "workflow_id": "custom_demo",
+  "recommended_input": "本月各部门业绩评分：市场部 85，研发部 92，销售部 78，运营部 96。",
+  "category": "example",
+  "workflow": "agents/custom_demo.py",
+  "copyable": true,
+  "inspectable": true
+}

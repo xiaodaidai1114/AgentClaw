@@ -1,0 +1,18 @@
+{
+  "id": "router",
+  "name": "02 Intent Router",
+  "description": "意图识别与条件路由示例：把提问、投诉、问候分配给不同处理节点。",
+  "tags": [
+    "示例",
+    "路由",
+    "JSON",
+    "意图识别"
+  ],
+  "entry": "agents/router.py",
+  "workflow_id": "router",
+  "recommended_input": "你们的服务让我等太久了，我想反馈一下。",
+  "category": "example",
+  "workflow": "agents/router.py",
+  "copyable": true,
+  "inspectable": true
+}

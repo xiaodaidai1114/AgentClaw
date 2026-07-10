@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "example-server": {
+      "command": "uvx",
+      "args": ["example-mcp-server"],
+      "env": {},
+      "disabled": true
+    }
+  }
+}

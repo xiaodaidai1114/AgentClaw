@@ -1,0 +1,19 @@
+{
+  "id": "xiaohongshu_writer",
+  "name": "小红书爆款文案生成器",
+  "description": "根据主题/产品/关键词，自动生成小红书风格的爆款文案。支持种草、测评、教程、情感、干货五种风格，可自定义目标受众和语气。",
+  "tags": [
+    "文案",
+    "小红书",
+    "营销",
+    "内容创作",
+    "种草"
+  ],
+  "entry": "agents/xiaohongshu_writer.py",
+  "workflow_id": "xiaohongshu_writer",
+  "recommended_input": "帮我写一篇关于「平价学生党护肤品」的小红书种草文案",
+  "category": "content",
+  "workflow": "agents/xiaohongshu_writer.py",
+  "copyable": true,
+  "inspectable": true
+}

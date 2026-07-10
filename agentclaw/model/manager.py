@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Lite
 import asyncio
 import json
 import os
+import re
+import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -171,6 +173,141 @@ class _MissingLLMClient:
         self.chat = _MissingChatClient(message)
 
 
+# ============================================================
+# DeepSeek DSML 工具调用兜底解析
+# DeepSeek V4 Pro(思考模式)不返回标准 OpenAI tool_calls,而是把工具调用
+# 序列化成 <｜｜DSML｜｜tool_calls> 文本块放进 content。此处做统一兜底:
+# 从 content 解析出标准 tool_calls,并剥离 DSML 文本。
+# 全角竖线 ｜ 为 U+FF5C(DeepSeek chat template 风格分隔符)。
+# ============================================================
+_DSML_SEG = "｜｜DSML｜｜"  # ｜｜DSML｜｜
+_DSML_PROBE = "<" + _DSML_SEG  # 快速判定 content 是否可能含 DSML
+_DSML_BLOCK_RE = re.compile(
+    re.escape(f"<{_DSML_SEG}tool_calls>") + r"(.*?)" + re.escape(f"</{_DSML_SEG}tool_calls>"),
+    re.DOTALL,
+)
+_DSML_INVOKE_RE = re.compile(
+    re.escape(f"<{_DSML_SEG}") + r'invoke name="([^"]+)">(.*?)' + re.escape(f"</{_DSML_SEG}") + r"invoke>",
+    re.DOTALL,
+)
+_DSML_PARAM_RE = re.compile(
+    re.escape(f"<{_DSML_SEG}") + r'parameter name="([^"]+)" string="(true|false)">(.*?)'
+    + re.escape(f"</{_DSML_SEG}") + r"parameter>",
+    re.DOTALL,
+)
+
+
+def _parse_dsml_tool_calls(text: Optional[str]) -> tuple[list[dict[str, Any]], str]:
+    """解析 content 里的 <｜｜DSML｜｜tool_calls> 块为标准 tool_calls。
+
+    返回 (tool_calls, cleaned_text):
+      - tool_calls: [{"id", "name", "arguments"}], arguments 为 JSON 字符串;
+      - cleaned_text: 移除 DSML 块后的文本(保留前导自然语言)。
+    未检测到 DSML 时返回 ([], 原文)。
+    """
+    if not text or _DSML_PROBE not in text:
+        return [], text or ""
+
+    tool_calls: list[dict[str, Any]] = []
+    for block in _DSML_BLOCK_RE.findall(text):
+        for name, body in _DSML_INVOKE_RE.findall(block):
+            args: dict[str, Any] = {}
+            for pname, is_str, pval in _DSML_PARAM_RE.findall(body):
+                pval = pval.strip()
+                if is_str == "false":
+                    # string="false" 表示参数值本身是 JSON(数组/对象)
+                    try:
+                        args[pname] = json.loads(pval)
+                    except Exception:
+                        args[pname] = pval
+                else:
+                    args[pname] = pval
+            tool_calls.append({
+                "id": f"call_{uuid.uuid4().hex[:24]}",
+                "name": name,
+                "arguments": json.dumps(args, ensure_ascii=False),
+            })
+
+    cleaned = _DSML_BLOCK_RE.sub("", text)
+    # 去掉因剥离 DSML 块留下的多余空行
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return tool_calls, cleaned
+
+
+class _DsmlStreamFilter:
+    """流式 DSML 文本拦截器(Phase 2)。
+
+    DeepSeek 会把工具调用以 <｜｜DSML｜｜tool_calls>...</...> 文本输出到 content。
+    本过滤器在流式过程中吃掉 DSML 块(不交给上层 yield/push),收集到 dsml_text;
+    对不含 DSML 的文本逐 delta 原样透传(返回单段),对其它模型零行为影响。
+    处理 DSML 标记跨 chunk 边界的情况(用 _pending 缓冲不完整标记)。
+    """
+
+    _START = "<｜｜DSML｜｜tool_calls>"
+    _END = "</｜｜DSML｜｜tool_calls>"
+
+    def __init__(self):
+        self._pending = ""      # 跨 chunk 的待判定缓冲(可能是不完整 DSML 标记)
+        self._in_dsml = False   # 是否在 DSML 块内
+        self.dsml_text = ""     # 收集到的 DSML 块原文(供流末解析/丢弃)
+
+    def feed(self, text: str) -> List[str]:
+        """输入一段 delta 文本,返回可安全 yield 的文本列表(DSML 部分被吃掉)。"""
+        if not text:
+            return []
+        out: List[str] = []
+        buf = self._pending + text
+        self._pending = ""
+        while buf:
+            if self._in_dsml:
+                end = buf.find(self._END)
+                if end != -1:
+                    self.dsml_text += buf[:end + len(self._END)]
+                    buf = buf[end + len(self._END):]
+                    self._in_dsml = False
+                else:
+                    hold = self._hold_len(buf, self._END)
+                    self.dsml_text += buf[:len(buf) - hold]
+                    self._pending = buf[len(buf) - hold:] if hold else ""
+                    buf = ""
+            else:
+                start = buf.find(self._START)
+                if start != -1:
+                    if start > 0:
+                        out.append(buf[:start])
+                    self.dsml_text += buf[start:start + len(self._START)]
+                    buf = buf[start + len(self._START):]
+                    self._in_dsml = True
+                else:
+                    hold = self._hold_len(buf, self._START)
+                    if hold:
+                        safe = buf[:len(buf) - hold]
+                        if safe:
+                            out.append(safe)
+                        self._pending = buf[len(buf) - hold:]
+                    else:
+                        if buf:
+                            out.append(buf)
+                        self._pending = ""
+                    buf = ""
+        return out
+
+    def flush(self) -> str:
+        """流末返回残留缓冲(未闭合的疑似标记按普通文本归还)。"""
+        leftover = self._pending
+        self._pending = ""
+        return leftover
+
+    @staticmethod
+    def _hold_len(buf: str, marker: str) -> int:
+        """buf 末尾与 marker 前缀匹配的最大长度(不含完整 marker)。"""
+        max_n = min(len(buf), len(marker) - 1)
+        for i in range(max_n, 0, -1):
+            if marker.startswith(buf[-i:]):
+                return i
+        return 0
+
+
 @dataclass
 class ToolCall:
     """工具调用"""
@@ -216,6 +353,10 @@ class LLMConfig:
 
     # 流式 usage 统计：部分代理/模型不支持 stream_options，设为 False 可跳过
     stream_usage: bool = True
+
+    # 部分模型（如 DeepSeek V4 Pro 思考模式）不支持 tool_choice 参数
+    # 设为 True 后完全不会发送 request body 中的 tool_choice
+    suppress_tool_choice: bool = False
 
     # 自定义提供商
     custom_client: Optional[Any] = None
@@ -277,6 +418,7 @@ class LLMConfig:
             extra_headers=data.get("extra_headers"),
             extra_body=extra_body,
             stream_usage=data.get("stream_usage", default_stream_usage),
+            suppress_tool_choice=bool(data.get("suppress_tool_choice", False)),
         )
     
     @classmethod
@@ -873,6 +1015,9 @@ class LLMManager(BaseComponent):
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
+                # Final safety net: strip tool_choice if model doesn't support it
+                if config.suppress_tool_choice:
+                    create_kwargs.pop("tool_choice", None)
                 return await asyncio.wait_for(
                     client.chat.completions.create(**create_kwargs),
                     timeout=max(float(config.timeout), 1.0),
@@ -904,6 +1049,15 @@ class LLMManager(BaseComponent):
                     f"LLM 请求失败: call_type={call_type}, model={config.id}, "
                     f"attempt={attempt}/{max_attempts}, error={err_str[:300]}"
                 )
+                # DeepSeek V4 Pro thinking mode rejects tool_choice parameter.
+                # Strip tool_choice and retry immediately instead of sleeping.
+                if "tool_choice" in err_str and create_kwargs.get("tool_choice"):
+                    logger.warning(
+                        f"移除不支持的 tool_choice={create_kwargs.pop('tool_choice', None)!r} 后重试"
+                    )
+                    attempt -= 1  # don't count this against max_attempts
+                    await asyncio.sleep(0.05)
+                    continue
                 if attempt >= max_attempts:
                     await self._push_model_error_event(err_str, config=config, call_type=call_type)
                     raise
@@ -993,6 +1147,8 @@ class LLMManager(BaseComponent):
         """
         client, config = self._get_current_client(model_id)
         request_max_attempts = kwargs.pop("_max_attempts", 3)
+        if config.suppress_tool_choice:
+            tool_choice = None
         try:
             request_max_attempts = max(1, int(request_max_attempts))
         except (TypeError, ValueError):
@@ -1027,7 +1183,7 @@ class LLMManager(BaseComponent):
             if tools:
                 create_kwargs["tools"] = tools
                 create_kwargs["parallel_tool_calls"] = False
-                if tool_choice:
+                if tool_choice and tool_choice != "auto" and not config.suppress_tool_choice:
                     create_kwargs["tool_choice"] = tool_choice
 
             # 应用自定义请求参数（用于 reasoning 等特殊配置）
@@ -1037,7 +1193,8 @@ class LLMManager(BaseComponent):
                 create_kwargs["extra_body"] = config.extra_body
             
             create_kwargs.update(kwargs)
-            
+            if config.suppress_tool_choice:
+                create_kwargs.pop("tool_choice", None)
             completion = await self._create_chat_completion_with_visible_retries(
                 client,
                 create_kwargs,
@@ -1115,6 +1272,17 @@ class LLMManager(BaseComponent):
                 aggregated_content = "".join(content_parts)
                 aggregated_reasoning = "".join(reasoning_parts) if reasoning_parts else None
 
+                # DSML 兜底:DeepSeek 等模型把工具调用以 DSML 文本输出时,标准 tool_calls 为空
+                if not tool_calls_map and aggregated_content:
+                    _dsml_calls, aggregated_content = _parse_dsml_tool_calls(aggregated_content)
+                    if _dsml_calls:
+                        logger.info(
+                            f"DSML 兜底解析(流式聚合): {len(_dsml_calls)} 个工具调用 "
+                            f"{[c['name'] for c in _dsml_calls]}"
+                        )
+                        for _i, _tc in enumerate(_dsml_calls):
+                            tool_calls_map[_i] = {"id": _tc["id"], "name": _tc["name"], "arguments": _tc["arguments"]}
+
                 if tool_calls_map:
                     return LLMResponse(
                         content=aggregated_content or None,
@@ -1157,22 +1325,36 @@ class LLMManager(BaseComponent):
             
             self._handle_success()
             
+            # DSML 兜底:标准 tool_calls 为空但 content 含 DSML 文本工具调用
+            _dsml_calls: list[dict[str, Any]] = []
+            _content = message.content
+            if not message.tool_calls and _content:
+                _dsml_calls, _content = _parse_dsml_tool_calls(_content)
+                if _dsml_calls:
+                    logger.info(
+                        f"DSML 兜底解析(非流式): {len(_dsml_calls)} 个工具调用 "
+                        f"{[c['name'] for c in _dsml_calls]}"
+                    )
+
             # 如果有工具调用，返回 LLMResponse 对象
-            if message.tool_calls:
+            if message.tool_calls or _dsml_calls:
                 return LLMResponse(
-                    content=message.content,
+                    content=_content,
                     tool_calls=[
                         ToolCall(
                             id=tc.id,
                             name=tc.function.name,
                             arguments=tc.function.arguments,
                         )
-                        for tc in message.tool_calls
+                        for tc in (message.tool_calls or [])
+                    ] + [
+                        ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
+                        for tc in _dsml_calls
                     ],
                     reasoning=reasoning_content,
                 )
-            
-            return message.content
+
+            return _content
             
         except asyncio.CancelledError:
             raise
@@ -1227,6 +1409,8 @@ class LLMManager(BaseComponent):
 
         client, config = self._get_current_client(model_id)
         call_type = str(kwargs.pop("_call_type", "stream") or "stream")
+        if config.suppress_tool_choice:
+            tool_choice = None
         prefix_hash = _messages_prefix_hash(messages)
         prefix_shape = _messages_prefix_shape(messages)
         tools_sig = _tools_signature(tools)
@@ -1269,7 +1453,7 @@ class LLMManager(BaseComponent):
             if tools:
                 create_kwargs["tools"] = tools
                 create_kwargs["parallel_tool_calls"] = False
-                if tool_choice:
+                if tool_choice and tool_choice != "auto" and not config.suppress_tool_choice:
                     create_kwargs["tool_choice"] = tool_choice
 
             # 应用自定义请求参数
@@ -1280,7 +1464,9 @@ class LLMManager(BaseComponent):
 
             create_kwargs.update(kwargs)
 
-            # codex 渠道强制移除 stream 相关参数（不支持 stream_options）
+            # If suppress_tool_choice is set, ensure no leaked tool_choice from kwargs
+            if config.suppress_tool_choice:
+                create_kwargs.pop("tool_choice", None)
             if config.channel == "codex":
                 create_kwargs.pop("stream_options", None)
 
@@ -1319,6 +1505,7 @@ class LLMManager(BaseComponent):
             _in_think_tag = False
             _think_buffer = ""
             _tag_buffer = ""  # 用于缓冲可能的标签片段
+            _dsml_filter = _DsmlStreamFilter()  # Phase 2: 流式拦截 DSML 文本
 
             # 防御：某些代理可能返回字符串而非 AsyncStream
             if isinstance(response, str):
@@ -1353,7 +1540,8 @@ class LLMManager(BaseComponent):
                 if reasoning_content and reasoning_channel:
                     await reasoning_channel.push_reasoning(reasoning_content)
                 if delta.content:
-                    text = delta.content
+                    _safe_segs = _dsml_filter.feed(delta.content)
+                    text = "".join(_safe_segs)
                     # 将缓冲的标签片段与新内容拼接
                     if _tag_buffer:
                         text = _tag_buffer + text
@@ -1431,6 +1619,14 @@ class LLMManager(BaseComponent):
                                     await output_channel.push_message(text)
                                 yield text
                                 text = ""
+
+            # Phase 2: 刷出 DSML filter 残留;无工具路径拦截到的 DSML 文本记录后丢弃
+            _dsml_filter.dsml_text += _dsml_filter.flush()
+            if _dsml_filter.dsml_text:
+                logger.info(
+                    f"DSML 文本拦截(流式无工具路径): 丢弃 {len(_dsml_filter.dsml_text)} 字符 "
+                    f"DSML 文本(harness_final 等路径模型不应输出工具调用)"
+                )
 
             # 流结束后，刷出残留缓冲
             if _tag_buffer:
@@ -1531,6 +1727,10 @@ class LLMManager(BaseComponent):
 
         client, config = self._get_current_client(model_id)
         call_type = str(kwargs.pop("_call_type", "stream_with_tools") or "stream_with_tools")
+
+        # Apply suppress_tool_choice at the entry point before any other processing
+        if config.suppress_tool_choice:
+            tool_choice = None
         prefix_hash = _messages_prefix_hash(messages)
         prefix_shape = _messages_prefix_shape(messages)
         tools_sig = _tools_signature(tools)
@@ -1571,7 +1771,7 @@ class LLMManager(BaseComponent):
             if tools:
                 create_kwargs["tools"] = tools
                 create_kwargs["parallel_tool_calls"] = False
-                if tool_choice:
+                if tool_choice and tool_choice != "auto" and not config.suppress_tool_choice:
                     create_kwargs["tool_choice"] = tool_choice
 
             # 应用自定义请求参数
@@ -1582,7 +1782,9 @@ class LLMManager(BaseComponent):
 
             create_kwargs.update(kwargs)
 
-            # codex 渠道强制移除 stream 相关参数（不支持 stream_options）
+            # If suppress_tool_choice is set, ensure no leaked tool_choice from kwargs
+            if config.suppress_tool_choice:
+                create_kwargs.pop("tool_choice", None)
             if config.channel == "codex":
                 create_kwargs.pop("stream_options", None)
 
@@ -1622,6 +1824,7 @@ class LLMManager(BaseComponent):
             _in_think_tag = False
             _think_buffer = ""
             _tag_buffer = ""
+            _dsml_filter = _DsmlStreamFilter()  # Phase 2: 流式拦截 DSML 文本
 
             # 防御：某些代理可能返回字符串而非 AsyncStream
             if isinstance(response, str):
@@ -1658,7 +1861,8 @@ class LLMManager(BaseComponent):
                 
                 # 处理文本内容（含 <think> 标签分离）
                 if delta.content:
-                    text = delta.content
+                    _safe_segs = _dsml_filter.feed(delta.content)
+                    text = "".join(_safe_segs)
                     if _tag_buffer:
                         text = _tag_buffer + text
                         _tag_buffer = ""
@@ -1766,6 +1970,9 @@ class LLMManager(BaseComponent):
                             if tc_chunk.function.arguments:
                                 target_tc["arguments"] += tc_chunk.function.arguments
 
+            # Phase 2: 刷出 DSML filter 残留(并入 dsml_text 一起解析)
+            _dsml_filter.dsml_text += _dsml_filter.flush()
+
             # 流结束后，刷出残留缓冲
             if _tag_buffer:
                 leftover = _tag_buffer
@@ -1814,10 +2021,32 @@ class LLMManager(BaseComponent):
                 f"pushed_to_user={output_channel is not None}"
             )
 
+            # DSML 兜底(Phase 1+2):filter 已把 DSML 文本拦截到 dsml_text(不进 content),
+            # 标准 tool_calls 为空时,从 dsml_text 解析出工具调用让其执行。
+            _dsml_cleaned = None
+            if not tool_calls_by_index and _dsml_filter.dsml_text:
+                _dsml_calls, _ = _parse_dsml_tool_calls(_dsml_filter.dsml_text)
+                # content_chunks 已不含 DSML(filter 拦截),直接作为清洗后 content
+                _dsml_cleaned = "".join(content_chunks) if content_chunks else ""
+                if _dsml_calls:
+                    logger.info(
+                        f"DSML 兜底解析(流式): {len(_dsml_calls)} 个工具调用 "
+                        f"{[c['name'] for c in _dsml_calls]}"
+                    )
+                    for _i, _tc in enumerate(_dsml_calls):
+                        tool_calls_by_index[_i] = {
+                            "id": _tc["id"], "index": _i,
+                            "name": _tc["name"], "arguments": _tc["arguments"],
+                        }
+
             # 如果有工具调用，yield LLMResponse
             if tool_calls_by_index:
+                _final_content = (
+                    _dsml_cleaned if _dsml_cleaned is not None
+                    else ("".join(content_chunks) if content_chunks else None)
+                )
                 yield LLMResponse(
-                    content="".join(content_chunks) if content_chunks else None,
+                    content=_final_content or None,
                     tool_calls=[
                         ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
                         for tc in tool_calls_by_index.values()
@@ -1870,13 +2099,14 @@ class LLMManager(BaseComponent):
             包含 content 和 tool_calls 的响应
         """
         client, config = self._get_current_client()
-        
+        if config.suppress_tool_choice:
+            kwargs.pop("tool_choice", None)
+
         try:
             response = await client.chat.completions.create(
                 model=config.azure_deployment or config.model,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto",
                 **kwargs,
             )
 
@@ -1893,7 +2123,6 @@ class LLMManager(BaseComponent):
                     model=config.azure_deployment or config.model,
                     messages=messages,
                     tools=tools,
-                    tool_choice="auto",
                     stream=True,
                     **kwargs,
                 )
