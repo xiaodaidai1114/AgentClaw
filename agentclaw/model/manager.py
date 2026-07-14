@@ -28,6 +28,14 @@ LLMManager - LLM 调用管理组件
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Literal, Union
 import asyncio
+import contextvars
+
+# 标记最近一次“无工具流式”（如 harness_final）是否拦截到 DSML（模型在该路径仍试图调用工具）。
+# LLMNode 的 harness_final 兜底读取它，决定是否回退 continue（替代纯长度代理，准确抓住
+# “final 有效输出 >20 但 DSML 被部分丢弃”的情况）。ContextVar 天然按 async task 隔离。
+_last_stream_dsml_intercepted: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "agentclaw_last_stream_dsml_intercepted", default=False
+)
 import json
 import os
 import re
@@ -1623,6 +1631,7 @@ class LLMManager(BaseComponent):
             # Phase 2: 刷出 DSML filter 残留;无工具路径拦截到的 DSML 文本记录后丢弃
             _dsml_filter.dsml_text += _dsml_filter.flush()
             if _dsml_filter.dsml_text:
+                _last_stream_dsml_intercepted.set(True)
                 logger.info(
                     f"DSML 文本拦截(流式无工具路径): 丢弃 {len(_dsml_filter.dsml_text)} 字符 "
                     f"DSML 文本(harness_final 等路径模型不应输出工具调用)"

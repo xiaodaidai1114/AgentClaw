@@ -72,6 +72,21 @@ def _get_mcp_connect_timeout() -> float:
     return max(timeout, 0.1)
 
 
+def _get_mcp_prewarm_timeout() -> float:
+    """startup 阶段 MCP 预热的尽力等待超时（秒）。
+
+    与 _get_mcp_connect_timeout（单次 connect 的硬超时）不同：本超时只决定
+    startup 末尾“等多久”，超时后**不取消**连接、让其后台继续。设为 0 表示
+    纯 fire-and-forget（startup 末尾不等待）。
+    """
+    raw = os.getenv("AGENTCLAW_MCP_PREWARM_TIMEOUT", "5.0").strip()
+    try:
+        timeout = float(raw)
+    except ValueError:
+        timeout = 5.0
+    return max(timeout, 0.0)
+
+
 def _classify_mcp_connect_results(
     results: Dict[str, Optional[str]],
 ) -> tuple[str, int, int]:

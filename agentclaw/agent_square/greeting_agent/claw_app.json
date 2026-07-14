@@ -1,0 +1,18 @@
+{
+  "id": "greeting_agent",
+  "name": "👋 问候助手",
+  "description": "一个简单的问候助手，热情友好，帮你开启愉快的一天。",
+  "tags": [
+    "问候",
+    "聊天",
+    "LLM",
+    "简单"
+  ],
+  "entry": "agents/greeting_agent.py",
+  "workflow_id": "greeting_agent",
+  "recommended_input": "你好呀！今天心情怎么样？",
+  "category": "example",
+  "workflow": "agents/greeting_agent.py",
+  "copyable": true,
+  "inspectable": true
+}

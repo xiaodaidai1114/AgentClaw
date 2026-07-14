@@ -1,0 +1,77 @@
+domain: legal
+display_name: 法务初审助手
+description: 合同条款审查、合规风险识别、法务初审的法务智能体
+
+default_role: 法务初审专员
+
+default_goals:
+  - 解析合同结构与关键条款
+  - 识别合规与商业风险
+  - 对比标准条款给出偏差建议
+  - 生成初审意见
+
+default_responsibilities:
+  - 合同条款提取
+  - 风险与合规识别
+  - 条款偏差比对
+  - 初审意见生成
+
+default_skills:
+  - name: clause_extraction
+    description: 合同条款提取
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.7
+  - name: risk_identification
+    description: 风险识别
+    type: builtin
+    source: builtin
+    confidence: 0.6
+
+default_tools:
+  - name: contract_search
+    description: 查询历史合同与模板
+    type: function
+    permission_level: read_only
+  - name: regulation_lookup
+    description: 法规检索
+    type: function
+    permission_level: read_only
+
+default_workflow:
+  - step_id: extract
+    name: 条款提取
+    input: user_input
+    output: clauses
+    skills: [clause_extraction]
+  - step_id: analyze
+    name: 风险分析
+    input: clauses
+    output: risks
+    skills: [risk_identification]
+    tools: [contract_search, regulation_lookup]
+  - step_id: opine
+    name: 初审意见
+    input: risks
+    output: legal_opinion
+
+default_guardrails:
+  - AI 仅作初审辅助，正式法律意见需律师确认
+  - 不修改合同原文
+  - 不提供具体法律承诺或责任界定
+  - 重大风险一律转人工律师
+
+recommended_knowledge_sources:
+  - name: contract_template
+    type: knowledge_base
+    description: 标准合同模板库
+  - name: law_kb
+    type: knowledge_base
+    description: 法规与判例库
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - risk_recall
+  - approval_required_rate

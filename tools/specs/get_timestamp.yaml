@@ -1,0 +1,20 @@
+name: get_timestamp
+description: 获取当前 Unix 时间戳（秒），用于需要当前时间的场景
+input_schema:
+  type: object
+  properties: {}
+handler:
+  type: python
+  module: time
+  function: time
+  method: GET
+  url: ''
+  headers: {}
+  auth_env: ''
+  body_template: null
+  command: ''
+  args: []
+  cwd: ''
+  timeout: 30.0
+permission: read_only
+domain: ''

@@ -1,0 +1,21 @@
+{
+  "id": "viral_xiaohongshu_writer",
+  "name": "🔥 小红书爆款文案生成器 v2",
+  "description": "增强版小红书爆款文案生成器。支持6种风格（种草/测评/教程/情感/干货/合集）、多版本输出、爆款潜力分析、SEO关键词优化。输入主题即可获得专业级小红书文案。",
+  "tags": [
+    "文案",
+    "小红书",
+    "营销",
+    "内容创作",
+    "种草",
+    "爆款",
+    "SEO"
+  ],
+  "entry": "agents/viral_xiaohongshu_writer.py",
+  "workflow_id": "viral_xiaohongshu_writer",
+  "recommended_input": "帮我写一篇关于「平价学生党护肤品」的小红书种草文案，要2个版本带爆款分析",
+  "category": "content",
+  "workflow": "agents/viral_xiaohongshu_writer.py",
+  "copyable": true,
+  "inspectable": true
+}

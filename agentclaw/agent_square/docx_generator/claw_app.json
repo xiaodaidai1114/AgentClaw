@@ -1,0 +1,20 @@
+{
+  "id": "docx_generator",
+  "name": "📄 Word 文档生成器",
+  "description": "根据用户输入的主题和内容，自动生成格式精美的 Word 文档（.docx）。支持专业/创意/简洁三种风格，可包含目录、页码、表格、列表等元素。",
+  "tags": [
+    "文档",
+    "Word",
+    "办公",
+    "报告",
+    "自动化",
+    "docx"
+  ],
+  "entry": "agents/docx_generator.py",
+  "workflow_id": "docx_generator",
+  "recommended_input": "帮我生成一份关于「智能手表市场分析」的项目调研报告",
+  "category": "productivity",
+  "workflow": "agents/docx_generator.py",
+  "copyable": true,
+  "inspectable": true
+}

@@ -22,6 +22,7 @@ from agentclaw.api.routers.admin.channels import router as channels_router
 from agentclaw.api.routers.admin.knowledgebases import router as knowledgebases_router
 from agentclaw.api.routers.admin.settings import router as settings_router
 from agentclaw.api.routers.admin.public_rooms import router as public_rooms_router
+from agentclaw.api.routers.admin.enterprise_tools import router as enterprise_tools_router
 
 # 创建主路由
 router = APIRouter(prefix="/admin")
@@ -41,6 +42,7 @@ router.include_router(channels_router)
 router.include_router(knowledgebases_router)
 router.include_router(settings_router)
 router.include_router(public_rooms_router)
+router.include_router(enterprise_tools_router)
 
 
 # 健康检查端点

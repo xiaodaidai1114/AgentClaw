@@ -374,6 +374,22 @@ class MaintenanceConfig:
         )
 
 
+@dataclass
+class AgentFactoryConfig:
+    """Agent Factory 配置（Phase 2+，默认关闭）"""
+    enabled: bool = False
+    auto_register: bool = False
+    templates_dir: str = ""
+
+    @classmethod
+    def from_env(cls) -> "AgentFactoryConfig":
+        return cls(
+            enabled=os.getenv("AGENTCLAW_ENABLE_AGENT_FACTORY", "false").lower() in ("true", "1", "yes"),
+            auto_register=os.getenv("AGENTCLAW_AGENT_FACTORY_AUTO_REGISTER", "false").lower() in ("true", "1", "yes"),
+            templates_dir=os.getenv("AGENTCLAW_AGENT_FACTORY_TEMPLATES_DIR", "").strip(),
+        )
+
+
 def _env_non_negative_int(name: str, default: int) -> int:
     try:
         value = int(os.getenv(name, str(default)))
@@ -394,6 +410,7 @@ class AgentClawConfig:
     project: ProjectConfig = field(default_factory=lambda: ProjectConfig.discover())
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
+    agent_factory: AgentFactoryConfig = field(default_factory=AgentFactoryConfig)
 
     _instance: Optional["AgentClawConfig"] = None
 
@@ -437,6 +454,7 @@ class AgentClawConfig:
             project=ProjectConfig.discover(),
             scheduler=SchedulerConfig.from_env(),
             maintenance=MaintenanceConfig.from_env(),
+            agent_factory=AgentFactoryConfig.from_env(),
         )
 
         try:

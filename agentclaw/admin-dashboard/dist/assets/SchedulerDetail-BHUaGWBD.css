@@ -1,0 +1,1 @@
+.stat-grid[data-v-fc29b619]{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}@media (max-width: 1200px){.stat-grid[data-v-fc29b619]{grid-template-columns:repeat(2,1fr)}}@media (max-width: 640px){.stat-grid[data-v-fc29b619]{grid-template-columns:1fr}}

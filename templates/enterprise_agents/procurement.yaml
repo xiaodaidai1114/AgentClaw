@@ -1,0 +1,77 @@
+domain: procurement
+display_name: 采购助手
+description: 采购需求分析、供应商比价、审批合规的采购智能体
+
+default_role: 采购专员
+
+default_goals:
+  - 解析采购需求并分类
+  - 匹配与比价供应商
+  - 识别大额采购的审批要求
+  - 生成采购建议
+
+default_responsibilities:
+  - 采购需求分析
+  - 供应商比价与评估
+  - 审批级别判断
+  - 采购建议生成
+
+default_skills:
+  - name: requirement_analysis
+    description: 采购需求分析
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.65
+  - name: vendor_evaluation
+    description: 供应商评估
+    type: builtin
+    source: builtin
+    confidence: 0.6
+
+default_tools:
+  - name: supplier_search
+    description: 查询供应商库
+    type: function
+    permission_level: read_only
+  - name: price_compare
+    description: 比价工具
+    type: function
+    permission_level: read_only
+
+default_workflow:
+  - step_id: analyze
+    name: 需求分析
+    input: user_input
+    output: requirement
+    skills: [requirement_analysis]
+  - step_id: source
+    name: 供应商比价
+    input: requirement
+    output: quotes
+    skills: [vendor_evaluation]
+    tools: [supplier_search, price_compare]
+  - step_id: recommend
+    name: 采购建议
+    input: quotes
+    output: recommendation
+
+default_guardrails:
+  - 超过阈值的采购必须走审批流程
+  - 不自动下单，仅生成采购建议
+  - 供应商选择需符合合规与准入要求
+  - 不泄露商业报价敏感信息
+
+recommended_knowledge_sources:
+  - name: procurement_policy
+    type: knowledge_base
+    description: 采购制度与审批权限
+  - name: vendor_kb
+    type: knowledge_base
+    description: 合格供应商库
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - approval_required_rate
+  - cost_saving_estimate

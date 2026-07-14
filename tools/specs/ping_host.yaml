@@ -1,0 +1,18 @@
+# 工具规范示例 1/3：CLI 工具
+# 用法：AI 调 ping_host(host="8.8.8.8")，执行 ping 命令
+name: ping_host
+description: ping 一个主机检查连通性，返回命令输出（用于网络诊断、连通性检查）
+input_schema:
+  type: object
+  properties:
+    host:
+      type: string
+      description: 主机名或 IP 地址
+  required: [host]
+handler:
+  type: cli
+  command: ping
+  args: ["-n", "4", "{host}"]   # Windows 用 -n；Linux/macOS 改 -c
+  timeout: 15
+permission: read_only
+domain: operations

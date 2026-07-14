@@ -1,0 +1,2 @@
+# Normalize line endings: auto-detect text vs binary; text files stored as LF.
+* text=auto

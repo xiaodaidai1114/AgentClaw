@@ -20,6 +20,11 @@ const dashboardRoutes = [
     component: () => import('../views/TemplateLibrary.vue'),
   },
   {
+    path: '/enterprise-tools',
+    name: 'EnterpriseTools',
+    component: () => import('../views/EnterpriseTools.vue'),
+  },
+  {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('../views/Dashboard.vue'),

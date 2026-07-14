@@ -1,0 +1,76 @@
+domain: sales
+display_name: 销售分析助手
+description: 分析销售线索、评分定级、给出跟进优先级与高价值客户识别的销售智能体
+
+default_role: 销售线索分析师
+
+default_goals:
+  - 对销售线索评分定级
+  - 识别高价值与潜在客户
+  - 给出跟进优先级与时机建议
+  - 生成可执行的跟进方案
+
+default_responsibilities:
+  - 线索收集与去重
+  - 线索评分与分级
+  - 客户画像分析
+  - 跟进建议与报告生成
+
+default_skills:
+  - name: lead_scoring
+    description: 线索评分定级
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.75
+  - name: customer_profiling
+    description: 客户画像
+    type: builtin
+    source: builtin
+    confidence: 0.6
+
+default_tools:
+  - name: crm_query
+    description: 查询 CRM 客户与线索
+    type: function
+    permission_level: read_only
+  - name: enrich_company
+    description: 企业工商信息补全
+    type: function
+    permission_level: read_only
+
+default_workflow:
+  - step_id: collect
+    name: 收集线索
+    input: user_input
+    output: leads
+    tools: [crm_query, enrich_company]
+  - step_id: analyze
+    name: 分析评分
+    input: leads
+    output: scored_leads
+    skills: [lead_scoring, customer_profiling]
+  - step_id: report
+    name: 跟进建议
+    input: scored_leads
+    output: followup_advice
+
+default_guardrails:
+  - 不泄露客户隐私与联系方式
+  - 仅处理脱敏后的线索数据
+  - 高价值判定与折扣建议需人工复核
+  - 不承诺未经审批的价格或合同条款
+
+recommended_knowledge_sources:
+  - name: product_kb
+    type: knowledge_base
+    description: 产品与定价知识库
+  - name: case_kb
+    type: knowledge_base
+    description: 成功案例库
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - correction_rate
+  - lead_conversion_lift

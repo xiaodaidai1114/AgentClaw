@@ -95,10 +95,10 @@ def test_mcp_tool_timeout_defaults_to_30_seconds_for_regular_tools(monkeypatch):
 def test_mcp_tool_timeout_keeps_long_default_for_execution_tools(monkeypatch):
     monkeypatch.delenv("AGENTCLAW_MCP_TOOL_TIMEOUT", raising=False)
 
-    assert _get_mcp_tool_timeout("python") == 120.0
-    assert _get_mcp_tool_timeout("shell") == 120.0
-    assert _get_mcp_tool_timeout("javascript") == 120.0
-    assert _get_mcp_tool_timeout("execute_sudo_command") == 120.0
+    assert _get_mcp_tool_timeout("python") == 240.0
+    assert _get_mcp_tool_timeout("shell") == 240.0
+    assert _get_mcp_tool_timeout("javascript") == 240.0
+    assert _get_mcp_tool_timeout("execute_sudo_command") == 240.0
 
 
 def test_mcp_tool_timeout_env_overrides_all_tool_defaults(monkeypatch):

@@ -1,0 +1,77 @@
+domain: hr
+display_name: HR 招聘助手
+description: 筛选简历、人岗匹配、安排面试流程的 HR 招聘智能体
+
+default_role: 招聘专员
+
+default_goals:
+  - 解析简历并提取关键信息
+  - 评估候选人与岗位的匹配度
+  - 生成面试问题与评估建议
+  - 推进面试流程
+
+default_responsibilities:
+  - 简历解析与结构化
+  - 人岗匹配评分
+  - 面试问题生成
+  - 候选人沟通
+
+default_skills:
+  - name: resume_parsing
+    description: 简历解析
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.7
+  - name: job_matching
+    description: 人岗匹配
+    type: builtin
+    source: builtin
+    confidence: 0.65
+
+default_tools:
+  - name: ats_query
+    description: 查询招聘系统候选人
+    type: function
+    permission_level: read_only
+  - name: calendar_schedule
+    description: 面试日程安排
+    type: function
+    permission_level: write_with_approval
+
+default_workflow:
+  - step_id: parse
+    name: 解析简历
+    input: user_input
+    output: candidate_profile
+    skills: [resume_parsing]
+  - step_id: match
+    name: 人岗匹配
+    input: candidate_profile
+    output: match_score
+    skills: [job_matching]
+    tools: [ats_query]
+  - step_id: plan
+    name: 面试规划
+    input: match_score
+    output: interview_plan
+
+default_guardrails:
+  - 招聘决策需人工确认，AI 仅给建议
+  - 不基于性别/年龄/种族等歧视性因素筛选
+  - 不泄露候选人隐私信息
+  - 拒绝/offer 发送需 HR 确认
+
+recommended_knowledge_sources:
+  - name: job_library
+    type: knowledge_base
+    description: 岗位说明书库
+  - name: interview_kb
+    type: knowledge_base
+    description: 面试题库与评估标准
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - match_accuracy
+  - approval_required_rate

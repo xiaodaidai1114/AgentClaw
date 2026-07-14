@@ -1101,6 +1101,37 @@ def up(
 
 
 
+@cli.command("create-agent")
+@click.argument("request")
+@click.option("-d", "--project-dir", default=None, help="项目目录（生成 agents/ 落地处）；默认用配置项目目录")
+@click.option(
+    "--register/--no-register",
+    default=False,
+    help="生成后是否热注册到 WorkflowRegistry（默认不注册，避免污染运行时）",
+)
+def create_agent(request: str, project_dir: Optional[str], register: bool):
+    """一句话生成企业 Agent（Phase 2 Agent Factory）
+
+    示例：agentclaw create-agent "创建一个销售线索分析助手"
+    """
+    from agentclaw.agent_factory import generate_agent
+
+    result = generate_agent(request, project_dir=project_dir, register=register)
+    click.secho(f"✅ 已生成 Agent: {result.blueprint.name}", fg="green")
+    click.echo(f"   领域: {result.domain}")
+    click.echo(f"   模板: {result.template.display_name}")
+    click.echo(f"   版本: {result.blueprint.version}")
+    click.echo(f"   脚手架目录: {result.scaffold.scaffold_dir}")
+    click.echo(f"   可运行文件: {result.scaffold.workflow_file}")
+    if register:
+        color = "green" if result.registered else "red"
+        click.secho(f"   热注册: {'成功' if result.registered else '失败'}", fg=color)
+    click.echo("")
+    click.echo("下一步：")
+    click.echo(f"  - 启动服务后通过 POST /api/workflow/run 调用 (workflow_id={result.blueprint.name})")
+    click.echo("  - 查看 prompt.md / workflow.json 进一步调优")
+
+
 # ============================================================
 # 模板文件
 # ============================================================

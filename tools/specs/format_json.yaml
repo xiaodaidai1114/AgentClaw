@@ -1,0 +1,17 @@
+# 工具规范示例 3/3：Python 函数工具
+# 用法：AI 调 format_json(obj={"a":1})，调用 json.dumps
+# 实际接入时把 module/function 指向你自己的模块（如 my_company.tools.reports.monthly_report）
+name: format_json
+description: 把对象格式化成 JSON 字符串（缩进 2，中文不转义）
+input_schema:
+  type: object
+  properties:
+    obj:
+      type: object
+      description: 要序列化的对象
+  required: [obj]
+handler:
+  type: python
+  module: json
+  function: dumps
+permission: read_only

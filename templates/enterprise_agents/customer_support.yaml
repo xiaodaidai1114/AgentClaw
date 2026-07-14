@@ -1,0 +1,76 @@
+domain: customer_support
+display_name: 客服助手
+description: 识别用户意图、分类工单、给出回复建议、安抚情绪的客服智能体
+
+default_role: 客户支持专员
+
+default_goals:
+  - 准确识别用户意图与情绪
+  - 分类工单并匹配历史解决方案
+  - 给出符合政策的回复建议
+  - 敏感投诉及时转人工
+
+default_responsibilities:
+  - 意图识别与情绪判断
+  - 工单分类与路由
+  - 回复建议生成
+  - 情绪安抚与升级处理
+
+default_skills:
+  - name: intent_classification
+    description: 用户意图分类
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.75
+  - name: sentiment_analysis
+    description: 情绪识别
+    type: builtin
+    source: builtin
+    confidence: 0.6
+
+default_tools:
+  - name: ticket_search
+    description: 查询历史工单与解决方案
+    type: function
+    permission_level: read_only
+  - name: order_lookup
+    description: 查询订单状态
+    type: function
+    permission_level: read_only
+
+default_workflow:
+  - step_id: understand
+    name: 理解用户
+    input: user_input
+    output: intent
+    skills: [intent_classification, sentiment_analysis]
+  - step_id: retrieve
+    name: 检索方案
+    input: intent
+    output: solution
+    tools: [ticket_search, order_lookup]
+  - step_id: reply
+    name: 生成回复
+    input: solution
+    output: reply
+
+default_guardrails:
+  - 不承诺超出政策的补偿或退款
+  - 不泄露其他客户信息
+  - 情绪激动或涉及投诉升级时转人工
+  - 引用订单/工单信息前核实
+
+recommended_knowledge_sources:
+  - name: support_kb
+    type: knowledge_base
+    description: 客服话术与解决方案知识库
+  - name: product_manual
+    type: knowledge_base
+    description: 产品手册与常见问题
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - fallback_rate
+  - escalation_rate

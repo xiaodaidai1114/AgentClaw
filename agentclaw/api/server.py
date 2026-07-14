@@ -213,6 +213,7 @@ class AgentClawServer:
         self.admin_prefix = admin_prefix
         self.enable_mcp_routes = _env_bool("AGENTCLAW_ENABLE_MCP_ROUTES", True)
         self.enable_scheduler_api = _env_bool("AGENTCLAW_ENABLE_SCHEDULER_API", True)
+        self.enable_agent_factory = _env_bool("AGENTCLAW_ENABLE_AGENT_FACTORY", False)
         self.enable_channel_routes = _env_bool("AGENTCLAW_ENABLE_CHANNEL_ROUTES", True)
         self.enable_api_docs = _env_bool("AGENTCLAW_ENABLE_API_DOCS", True)
         
@@ -872,6 +873,7 @@ class AgentClawServer:
             # 触发所有工作流的 PromptManager 延迟加载
             # 此时数据库连接已建立，可以从数据库加载提示词
             from agentclaw.api.registry import WorkflowRegistry
+            mcp_prewarm_workflows = []  # 收集需要预热 MCP 的工作流，供 startup 末尾尽力等待
             for wf in WorkflowRegistry.list_all():
                 try:
                     if hasattr(wf, "_ensure_components"):
@@ -879,6 +881,13 @@ class AgentClawServer:
                         logger.info(f"工作流 {wf.id} 的组件已初始化（MCP/Skills/PromptManager）")
                 except Exception as e:
                     logger.warning(f"工作流 {wf.id} 的组件初始化失败: {e}")
+                # MCP 预热：后台启动连接（wait=False 不阻塞 startup），让首次 agent 执行时工具已就绪
+                if getattr(wf, "_mcp_toolkit", None) and hasattr(wf, "_ensure_mcp_connected"):
+                    try:
+                        await wf._ensure_mcp_connected(wait=False)
+                        mcp_prewarm_workflows.append(wf)
+                    except Exception as e:
+                        logger.warning(f"工作流 {wf.id} 的 MCP 预热启动失败: {e}")
                 if wf._prompt_manager and hasattr(wf._prompt_manager, '_ensure_db_loaded'):
                     try:
                         await wf._prompt_manager._ensure_db_loaded()
@@ -972,6 +981,27 @@ class AgentClawServer:
             except Exception as e:
                 logger.warning(f"Channel 适配器启动失败: {e}")
 
+            # MCP 预热：尽力等待后台连接完成（短超时；超时则后台继续，绝不取消进行中的 stdio 握手）
+            if mcp_prewarm_workflows:
+                from agentclaw.graph.workflow import _get_mcp_prewarm_timeout
+                prewarm_timeout = _get_mcp_prewarm_timeout()
+                pending = [
+                    wf._mcp_connect_task
+                    for wf in mcp_prewarm_workflows
+                    if getattr(wf, "_mcp_connect_task", None) is not None
+                ]
+                if pending and prewarm_timeout > 0:
+                    try:
+                        done, still_pending = await asyncio.wait(pending, timeout=prewarm_timeout)
+                        ready = sum(
+                            1 for wf in mcp_prewarm_workflows
+                            if getattr(wf, "_mcp_toolkit", None) and wf._mcp_toolkit.is_connected
+                        )
+                        tail = f"，{len(still_pending)} 个仍在后台连接" if still_pending else ""
+                        logger.info(f"MCP 预热: {ready}/{len(mcp_prewarm_workflows)} 工作流工具已就绪{tail}")
+                    except Exception as e:
+                        logger.warning(f"MCP 预热等待异常: {e}")
+
             logger.info(f"AgentClaw 服务启动完成: http://{self.host}:{self.port}")
 
         @app.on_event("shutdown")
@@ -1056,6 +1086,14 @@ class AgentClawServer:
             try:
                 from agentclaw.scheduler.api import router as scheduler_router
                 app.include_router(scheduler_router, prefix="/api")
+            except ImportError:
+                pass
+
+        # Agent Factory routes (Phase 2+, default off)
+        if self.enable_agent_factory:
+            try:
+                from agentclaw.api.routers.public.agents import router as agents_router
+                app.include_router(agents_router, prefix="/api")
             except ImportError:
                 pass
         

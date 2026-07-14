@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 _MCP_PROXY_ENV = "AGENTCLAW_MCP_PROXY"
 _MCP_PROXY_BYPASS_HOSTS = ("localhost", "127.0.0.1", "::1")
 _DEFAULT_MCP_TOOL_TIMEOUT = 30.0
-_LONG_RUNNING_MCP_TOOL_TIMEOUT = 120.0
+_LONG_RUNNING_MCP_TOOL_TIMEOUT = 240.0
 _LONG_RUNNING_MCP_TOOL_NAMES = {
     "python",
     "javascript",
@@ -533,6 +533,15 @@ class MCPClient:
     
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         """调用工具"""
+        if not self._connected:
+            # 自动重连：超时/断开后恢复，避免一次断开废掉后续所有 shell/python 调用
+            logger.info(f"MCP Server '{self.name}' 未连接，尝试自动重连后调用工具")
+            try:
+                await self.connect()
+            except Exception as e:
+                raise RuntimeError(
+                    f"MCP Server '{self.name}' 自动重连失败: {e}"
+                ) from e
         if not self._connected:
             raise RuntimeError(f"MCP Server '{self.name}' 未连接")
         

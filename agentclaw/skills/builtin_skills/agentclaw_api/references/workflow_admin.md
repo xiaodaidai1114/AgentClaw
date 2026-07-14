@@ -2,6 +2,21 @@
 
 > 内部 agent/shell 调用使用本机 internal relay。先读取 `<project_dir>/.agentclaw/relay.json` 的 `internal_url` 作为 `{BASE_URL}`，实际 URL 为 `{BASE_URL}/_internal` + 下方文档路径。
 
+## 快速验证（一条命令，禁止用 browser 点 UI）
+
+验证工作流是否已注册、查看执行统计，**一条 curl 即可**——不要打开 Dashboard 用 browser 去点：
+
+```bash
+# 列出所有工作流（含 24h 执行统计）
+curl -s "{BASE_URL}/_internal/admin/workflows"
+
+# 只看 id 列表，快速确认目标工作流是否注册成功
+curl -s "{BASE_URL}/_internal/admin/workflows" | python -c "import sys,json; print([w['id'] for w in json.load(sys.stdin)['workflows']])"
+
+# 查单个工作流详情（节点拓扑 + 统计）——用于确认注册成功/查看结构
+curl -s "{BASE_URL}/_internal/admin/workflows/{workflow_id}"
+```
+
 ## 工作流管理
 
 ### 列出工作流（含统计）

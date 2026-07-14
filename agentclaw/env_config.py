@@ -266,6 +266,18 @@ ENV_SECTIONS: tuple[EnvSection, ...] = (
         ),
     ),
     EnvSection(
+        title="Agent Factory",
+        description=(
+            "Agent Factory 一句话生成企业 Agent（Phase 2+）。默认关闭；",
+            "开启后挂载 POST /api/agents/generate 路由。CLI create-agent 始终可用，不受此开关影响。",
+        ),
+        variables=(
+            EnvVarSpec("AGENTCLAW_ENABLE_AGENT_FACTORY", "false", "是否挂载 Agent Factory API 路由 /api/agents/*；默认关闭，不影响现有流程。", commented=False),
+            EnvVarSpec("AGENTCLAW_AGENT_FACTORY_AUTO_REGISTER", "false", "生成 Agent 后是否自动热注册到 WorkflowRegistry；默认关闭，需显式 --register 或 API 指定。"),
+            EnvVarSpec("AGENTCLAW_AGENT_FACTORY_TEMPLATES_DIR", "", "企业模板目录（如 templates/enterprise_agents/）；留空仅使用内置 general/sales/customer_support 模板。"),
+        ),
+    ),
+    EnvSection(
         title="MCP And Builtin Tools",
         description=(
             "MCP 连接、内置工具和工具执行边界配置。",

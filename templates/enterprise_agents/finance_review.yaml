@@ -1,0 +1,77 @@
+domain: finance
+display_name: 财务审核助手
+description: 审核报销单据、核对发票、识别合规风险的财务智能体
+
+default_role: 财务审核专员
+
+default_goals:
+  - 核对报销单据与发票一致性
+  - 识别超标、重复、不合规支出
+  - 给出审核意见与退回/通过建议
+  - 生成审核记录
+
+default_responsibilities:
+  - 单据发票核对
+  - 合规性与预算检查
+  - 风险识别与标记
+  - 审核意见生成
+
+default_skills:
+  - name: receipt_validation
+    description: 发票单据校验
+    type: builtin
+    required: true
+    source: builtin
+    confidence: 0.7
+  - name: policy_compliance
+    description: 报销政策合规检查
+    type: builtin
+    source: builtin
+    confidence: 0.65
+
+default_tools:
+  - name: erp_query
+    description: 查询 ERP 报销与预算数据
+    type: function
+    permission_level: read_only
+  - name: invoice_verify
+    description: 发票真伪查验
+    type: function
+    permission_level: read_only
+
+default_workflow:
+  - step_id: extract
+    name: 提取单据
+    input: user_input
+    output: receipt_data
+    tools: [invoice_verify]
+  - step_id: check
+    name: 合规检查
+    input: receipt_data
+    output: check_result
+    skills: [receipt_validation, policy_compliance]
+    tools: [erp_query]
+  - step_id: decide
+    name: 审核意见
+    input: check_result
+    output: audit_opinion
+
+default_guardrails:
+  - 不修改财务系统数据，仅给出审核建议
+  - 涉及大额或敏感支出需人工复核
+  - 不泄露员工薪酬与个人报销明细
+  - 发票异常一律标记转人工
+
+recommended_knowledge_sources:
+  - name: finance_policy
+    type: knowledge_base
+    description: 报销与财务制度
+  - name: tax_rules
+    type: knowledge_base
+    description: 税务与发票规则
+
+evaluation_metrics:
+  - task_success_rate
+  - human_feedback_score
+  - approval_required_rate
+  - audit_accuracy

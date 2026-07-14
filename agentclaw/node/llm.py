@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# harness_final 退化检测（见 LLMNode._is_final_response_degraded）：harness_final 是无工具路径，
+# 若模型在该路径仍输出工具调用（DSML）被拦截，最终回复会为空/极短，用户会感知“卡住”。
+# 检测到退化时回退 continue，让 agent 用工具真正完成，而非丢弃后给空回复。
+_HARNESS_FINAL_DEGRADED_MAX_LEN = 20
+_HARNESS_FINAL_FALLBACK_MAX = 2  # 最多回退次数，防死循环
+
 
 def _csv_env_set(name: str) -> set[str]:
     raw = os.getenv(name, "").strip()
@@ -1085,6 +1091,7 @@ class LLMNode(BaseNode):
             harness_state = harness.state
         _max_empty_retries = 3  # 连续空响应最大重试次数
         _consecutive_empty_responses = 0
+        final_fallback_used = 0  # harness_final 退化回退计数（DSML 拦截致空回复时回退 continue）
         for round_idx in range(max_rounds):
             if harness:
                 harness.begin_turn(round_idx + 1)
@@ -1253,7 +1260,7 @@ class LLMNode(BaseNode):
                             await self._push_harness_user_feedback(post_result.user_feedback, batch_id=tool_batch_id)
                             if post_result.flow_action in {"finish", "ask_user", "abort"}:
                                 if post_result.flow_action == "finish":
-                                    response = await self._generate_harness_final_response(
+                                    response, dsml_intercepted = await self._generate_harness_final_response(
                                         context=context,
                                         messages=messages,
                                         model_id=effective_model_id,
@@ -1261,6 +1268,20 @@ class LLMNode(BaseNode):
                                         params=params,
                                         push_to_user=self.output_to_user,
                                     )
+                                    final_degraded = dsml_intercepted or self._is_final_response_degraded(response)
+                                    if final_degraded and final_fallback_used < _HARNESS_FINAL_FALLBACK_MAX:
+                                        final_fallback_used += 1
+                                        reason = "DSML拦截(模型仍想调用工具)" if dsml_intercepted else f"回复为空/极短({len(response or '')}字符)"
+                                        logger.warning(
+                                            f"节点 {self.id}: harness_final {reason}，"
+                                            f"回退 continue 重试 ({final_fallback_used}/{_HARNESS_FINAL_FALLBACK_MAX})"
+                                        )
+                                        continue
+                                    if final_degraded:
+                                        logger.warning(
+                                            f"节点 {self.id}: harness_final 仍异常，"
+                                            f"已达回退上限({_HARNESS_FINAL_FALLBACK_MAX})，强制结束"
+                                        )
                                     harness.on_finish(response, "harness final response generated", round_index=round_idx + 1)
                                 else:
                                     response = post_result.user_feedback or ""
@@ -1454,7 +1475,7 @@ class LLMNode(BaseNode):
                             await self._push_harness_user_feedback(post_result.user_feedback, batch_id=tool_batch_id)
                             if post_result.flow_action in {"finish", "ask_user", "abort"}:
                                 if post_result.flow_action == "finish":
-                                    response = await self._generate_harness_final_response(
+                                    response, dsml_intercepted = await self._generate_harness_final_response(
                                         context=context,
                                         messages=messages,
                                         model_id=effective_model_id,
@@ -1462,6 +1483,20 @@ class LLMNode(BaseNode):
                                         params=params,
                                         push_to_user=self.output_to_user,
                                     )
+                                    final_degraded = dsml_intercepted or self._is_final_response_degraded(response)
+                                    if final_degraded and final_fallback_used < _HARNESS_FINAL_FALLBACK_MAX:
+                                        final_fallback_used += 1
+                                        reason = "DSML拦截(模型仍想调用工具)" if dsml_intercepted else f"回复为空/极短({len(response or '')}字符)"
+                                        logger.warning(
+                                            f"节点 {self.id}: harness_final {reason}，"
+                                            f"回退 continue 重试 ({final_fallback_used}/{_HARNESS_FINAL_FALLBACK_MAX})"
+                                        )
+                                        continue
+                                    if final_degraded:
+                                        logger.warning(
+                                            f"节点 {self.id}: harness_final 仍异常，"
+                                            f"已达回退上限({_HARNESS_FINAL_FALLBACK_MAX})，强制结束"
+                                        )
                                     harness.on_finish(response, "harness final response generated", round_index=round_idx + 1)
                                 else:
                                     response = post_result.user_feedback or ""
@@ -1921,16 +1956,23 @@ class LLMNode(BaseNode):
         images: Optional[List[ImageInput]],
         params: dict[str, Any],
         push_to_user: bool,
-    ) -> str:
-        """Generate the final user response after Harness decides to finish."""
+    ) -> tuple[str, bool]:
+        """Generate the final user response after Harness decides to finish.
+
+        Returns (response, dsml_intercepted)：dsml_intercepted 表示无工具流式路径
+        是否拦截到 DSML（模型仍想调用工具），用于 harness_final 兜底回退判断。
+        """
         if context:
             context.check_cancelled()
         final_params = dict(params or {})
         final_params.pop("tools", None)
         final_params.pop("tool_choice", None)
         final_params.pop("parallel_tool_calls", None)
+        from agentclaw.model.manager import _last_stream_dsml_intercepted
+
         chunks: list[str] = []
         final_params["_call_type"] = "harness_final"
+        _last_stream_dsml_intercepted.set(False)  # reset before stream
         async for chunk in context.llm_manager.stream(
             messages,
             model_id=model_id,
@@ -1939,7 +1981,17 @@ class LLMNode(BaseNode):
             **final_params,
         ):
             chunks.append(chunk)
-        return "".join(chunks)
+        dsml_intercepted = _last_stream_dsml_intercepted.get()
+        return "".join(chunks), dsml_intercepted
+
+    @staticmethod
+    def _is_final_response_degraded(response: str) -> bool:
+        """判断 harness_final 回复是否退化（空/极短）。
+
+        harness_final 是无工具路径；若模型在该路径仍输出工具调用（DSML）被拦截，
+        最终回复会为空/极短，用户会感知“卡住”。用于触发回退 continue 重试。
+        """
+        return len((response or "").strip()) < _HARNESS_FINAL_DEGRADED_MAX_LEN
 
     async def _maybe_compress_context(
         self,

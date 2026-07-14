@@ -98,6 +98,16 @@ export const templateLibraryApi = {
   importApp: (id, data = {}) => api.post(`/dashboard/template-library/apps/${id}/import`, data),
 }
 
+// Enterprise Tools API（企业工具统一接入）
+export const enterpriseToolsApi = {
+  list: () => api.get('/enterprise-tools'),
+  get: (name) => api.get(`/enterprise-tools/${name}`),
+  create: (data) => api.post('/enterprise-tools', data),
+  update: (name, data) => api.put(`/enterprise-tools/${name}`, data),
+  remove: (name) => api.delete(`/enterprise-tools/${name}`),
+  test: (name, data) => api.post(`/enterprise-tools/${name}/test`, data),
+}
+
 // Workflows API
 export const workflowsApi = {
   list: (params) => api.get('/workflows', { params }),

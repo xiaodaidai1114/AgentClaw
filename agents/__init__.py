@@ -22,3 +22,19 @@ try:
     from .daily_ai_news import workflow as daily_ai_news_workflow  # noqa: F401
 except ImportError:
     pass
+
+# Sales Lead Analyzer
+try:
+    from workflows.sales_lead_analyzer import workflow as sales_lead_analyzer_workflow  # noqa: F401
+except ImportError:
+    pass
+# AgentClaw template import: parallel
+from .parallel.agents.parallel import workflow as parallel_workflow  # noqa: F401
+# AgentClaw template import: tool_agent
+from .tool_agent.agents.tool_agent import workflow as tool_agent_workflow  # noqa: F401
+
+# timestamp_agent - 企业工具端到端验证
+try:
+    from .timestamp_agent import workflow as timestamp_agent_workflow  # noqa: F401
+except ImportError:
+    pass

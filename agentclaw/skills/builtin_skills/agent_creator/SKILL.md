@@ -117,10 +117,20 @@ Common evidence gates:
 10. **After successful registration**, ensure bootstrap wiring:
    - Add `import workflows.my_workflow` in `server.py`, or import it via `workflows/__init__.py`, so the workflow loads after server restart.
    - Add this import only after registration succeeds. Registration is the primary mechanism; the bootstrap import is for persistence across restarts.
-11. Validate runtime using **streaming mode** to avoid timeouts:
-   - `shell(command="curl -s -N -X POST {BASE_URL}/_internal/api/workflow/run -H 'Content-Type: application/json' -d '{\"workflow_id\": \"my_workflow\", \"inputs\": {...}, \"response_mode\": \"streaming\"}'", timeout=300)`
-   - Streaming mode returns SSE events line by line. `event: workflow_finished` indicates success; `event: error` indicates failure.
-   - For simple workflows, blocking mode is acceptable: use `response_mode: "blocking"` with `timeout=300` in the shell tool.
+11. Validate runtime with the **python tool** (do NOT use `shell`+`curl` — curl requires hand-escaping JSON inside shell quotes and fails repeatedly). Use `requests.post(..., json=payload)` so the dict is serialized automatically with zero manual escaping:
+   - Call `python(code=<script below>, args=[], timeout=300)`. **`args=[]` is required** by the python tool even when empty; omitting it raises "Missing required tool argument(s): args".
+   - Script (write as real multi-line code, not literal `\n`):
+     ```python
+     import requests
+     url = "{BASE_URL}/_internal/api/workflow/run"
+     payload = {"workflow_id": "my_workflow", "inputs": {"user_input": "<realistic test input>"}, "response_mode": "streaming"}
+     with requests.post(url, json=payload, stream=True, timeout=300) as r:
+         for line in r.iter_lines():
+             if line:
+                 print(line.decode(errors="replace"))
+     ```
+   - `event: workflow_finished` indicates success; `event: error` indicates failure.
+   - For simple workflows, blocking mode is fine: set `"response_mode": "blocking"` in the payload and print `r.text`.
    - API details: `read_skill_file(skill_name="agentclaw_api", file_name="references/workflow.md")`
 12. Report results with evidence.
 

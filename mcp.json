@@ -5,6 +5,15 @@
       "args": ["example-mcp-server"],
       "env": {},
       "disabled": true
+    },
+    "enterprise-tools": {
+      "command": "python",
+      "args": ["-m", "agentclaw.tools.server", "--specs-dir", "tools/specs"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "ORDER_API_KEY": "${ORDER_API_KEY}"
+      },
+      "disabled": false
     }
   }
 }

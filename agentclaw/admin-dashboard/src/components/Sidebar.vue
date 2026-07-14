@@ -73,6 +73,7 @@ const baseMenuItems = computed(() => [
   { label: t('nav.channels'), key: '/channels', icon: '📡' },
   { label: t('nav.publicRooms'), key: '/public-rooms', icon: '💬' },
   { label: t('nav.dashboard'), key: '/dashboard', icon: '📊' },
+  { label: '企业工具', key: '/enterprise-tools', icon: '🔧' },
 ])
 
 const menuOptions = computed(() => baseMenuItems.value.map(item => ({
